@@ -1,4 +1,6 @@
-name: dair_pointpillar_uncertainty_new_d3_l2von_limit_v_001_s1
+# use it for late fusion / no fusion
+
+name: dair_single_late
 root_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/train.json"
 validate_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
 test_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
@@ -22,7 +24,7 @@ train_params:
 fusion:
   core_method: 'LateFusionDatasetDAIR' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
-    proj_first: True
+    proj_first: True # no matters
 
 # preprocess-related
 preprocess:
@@ -48,7 +50,7 @@ data_augment:
 
 # anchor box related
 postprocess:
-  core_method: 'UncertaintyVoxelPostprocessor' # VoxelPostprocessor, BevPostprocessor supported
+  core_method: 'VoxelPostprocessor' # VoxelPostprocessor, BevPostprocessor supported
   gt_range: *cav_lidar
   dir_args: &dir_args
     dir_offset: 0.7853
@@ -71,12 +73,11 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_uncertainty
+  core_method: point_pillar
   args:
     voxel_size: *voxel_size
     lidar_range: *cav_lidar
     anchor_number: *achor_num
-    uncertainty_dim: &uncertainty_dim 3
     pillar_vfe:
       use_norm: true
       with_distance: false
@@ -94,27 +95,18 @@ model:
 
     anchor_num: *achor_num
     dir_args: *dir_args
+    
 
 loss:
-  core_method: point_pillar_uncertainty_loss
+  core_method: point_pillar_dir_loss
   args:
     cls_weight: 1.0
     reg: 2.0
-    kl_weight: 0.25
     
     dir_args: 
       dir_weight: 0.2
       args: *dir_args
       anchor_yaw: *anchor_yaw
-
-    kl_args:
-      angle_weight: 0.5
-      uncertainty_dim: *uncertainty_dim
-      xy_loss_type: l2
-      angle_loss_type: von
-      lambda_V: 0.01
-      s0: 1
-      limit_period: True
 
 optimizer:
   core_method: Adam
