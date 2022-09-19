@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from opencood.utils import box_utils
+from opencood.utils import common_utils
 
 
 class BasePostprocessor(object):
@@ -94,6 +95,91 @@ class BasePostprocessor(object):
         gt_box3d_selected_indices = \
             [object_id_list.index(x) for x in set(object_id_list)]
         gt_box3d_tensor = gt_box3d_list[gt_box3d_selected_indices]
+
+        # filter the gt_box to make sure all bbx are in the range
+        mask = \
+            box_utils.get_mask_for_boxes_within_range_torch(gt_box3d_tensor, self.params['gt_range'])
+        gt_box3d_tensor = gt_box3d_tensor[mask, :, :]
+
+        return gt_box3d_tensor
+
+
+    def generate_gt_bbx_by_iou(self, data_dict):
+        """
+        This function is only used by LateFusionDatasetDAIR
+
+        LateFusionDatasetDAIR's label are from veh-side and inf-side
+        and do not have unique object id.
+
+        So we will filter the same object by IoU
+
+        The base postprocessor will generate 3d groundtruth bounding box.
+
+        For early and intermediate fusion,
+            data_dict only contains ego.
+
+        For late fusion,
+            data_dcit contains all cavs, so we need transformation matrix.
+            To generate gt boxes, transformation_matrix should be clean
+
+        Parameters
+        ----------
+        data_dict : dict
+            The dictionary containing the origin input data of model.
+
+        Returns
+        -------
+        gt_box3d_tensor : torch.Tensor
+            The groundtruth bounding box tensor, shape (N, 8, 3).
+        """
+        gt_box3d_list = []
+
+        for cav_id, cav_content in data_dict.items():
+            # used to project gt bounding box to ego space
+            # object_bbx_center is clean.
+            transformation_matrix = cav_content['transformation_matrix_clean']
+
+            object_bbx_center = cav_content['object_bbx_center']
+            object_bbx_mask = cav_content['object_bbx_mask']
+            object_ids = cav_content['object_ids']
+            object_bbx_center = object_bbx_center[object_bbx_mask == 1]
+
+            # convert center to corner
+            object_bbx_corner = \
+                box_utils.boxes_to_corners_3d(object_bbx_center,
+                                              self.params['order'])
+            projected_object_bbx_corner = \
+                box_utils.project_box3d(object_bbx_corner.float(),
+                                        transformation_matrix)
+            gt_box3d_list.append(projected_object_bbx_corner)
+
+        # if only ego agent
+        if len(data_dict) == 1:
+            gt_box3d_tensor = torch.vstack(gt_box3d_list)
+        # both veh-side and inf-side label
+        else:
+            veh_corners_np = gt_box3d_list[0].cpu().numpy()
+            inf_corners_np = gt_box3d_list[1].cpu().numpy()
+            inf_polygon_list = list(common_utils.convert_format(inf_corners_np))
+            veh_polygon_list = list(common_utils.convert_format(veh_corners_np))
+            iou_thresh = 0.05 
+
+
+            gt_from_inf = []
+            for i in range(len(inf_polygon_list)):
+                inf_polygon = inf_polygon_list[i]
+                ious = common_utils.compute_iou(inf_polygon, veh_polygon_list)
+                if (ious > iou_thresh).any():
+                    continue
+                gt_from_inf.append(inf_corners_np[i])
+            
+            if len(gt_from_inf):
+                gt_from_inf = np.stack(gt_from_inf)
+                gt_box3d = np.vstack([veh_corners_np, gt_from_inf])
+            else:
+                gt_box3d = veh_corners_np
+
+            gt_box3d_tensor = torch.from_numpy(gt_box3d).to(device=gt_box3d_list[0].device)
 
         # filter the gt_box to make sure all bbx are in the range
         mask = \

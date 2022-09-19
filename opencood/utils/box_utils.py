@@ -1132,7 +1132,7 @@ def project_world_objects_dairv2x_late(object_list,
     for object_content in object_list:        
         object_id = i
         #注意order!
-        #坐标系转化成lidar_pose!
+        # 本身在ego坐标系
         if 'rotation' not in object_content:
             print(object_content)
         x = object_content['3d_location']['x']

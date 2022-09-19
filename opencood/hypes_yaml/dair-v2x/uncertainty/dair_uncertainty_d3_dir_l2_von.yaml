@@ -1,4 +1,4 @@
-name: dair_pointpillar_uncertainty_new_d3_l2von_limit_v_01_s1
+name: dair_pointpillar_uncertainty_new_d3_l2von_limit_v_001_s1
 root_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/train.json"
 validate_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
 test_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
@@ -6,7 +6,7 @@ test_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
 noise_setting:
   add_noise: false
   
-comm_range: 70
+comm_range: 100
 
 only_vis_ego: True
 
