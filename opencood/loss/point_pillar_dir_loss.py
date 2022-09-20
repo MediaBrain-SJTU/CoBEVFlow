@@ -83,15 +83,14 @@ class PointPillarDirLoss(nn.Module):
 
         self.cls_weight = args['cls_weight']
         self.reg_coe = args['reg']
-        self.dir_weight = args['dir_weight']
 
-        self.dir_offset = args['dir_args']['dir_offset']
-        self.num_bins = args['dir_args']['num_bins']
-
-
-        anchor_yaw = np.deg2rad(np.array(args['anchor_yaw']))  # for direction classification
+        self.dir_weight = args['dir_args']['dir_weight']
+        self.dir_offset = args['dir_args']['args']['dir_offset']
+        self.num_bins = args['dir_args']['args']['num_bins']
+        anchor_yaw = np.deg2rad(np.array(args['dir_args']['anchor_yaw']))  # for direction classification
         self.anchor_yaw_map = torch.from_numpy(anchor_yaw).view(1,-1,1)  # [1,2,1]
         self.anchor_num = self.anchor_yaw_map.shape[1]
+
 
         self.loss_dict = {}
 
@@ -155,12 +154,15 @@ class PointPillarDirLoss(nn.Module):
         ######## direction ##########
         dir_targets = self.get_direction_target(targets)
         N =  output_dict["dm"].shape[0]
-        dir_logits = output_dict["dm"].permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H * W * anchor_num, 2]
+        dir_logits = output_dict["dm"].permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H*W*#anchor, 2]
 
 
-        dir_loss = softmax_cross_entropy_with_logits(dir_logits.view(-1, self.anchor_num), dir_targets.view(-1, self.anchor_num))  # [N*H*W*anchor_num,]
-        dir_loss = dir_loss.view(dir_logits.shape[:2]) * reg_weights # dir_logits.shape[:2] is [N, H*W*anchor_num], reg_weights is [N*H*W, anchor_num]?
+        dir_loss = softmax_cross_entropy_with_logits(dir_logits.view(-1, self.anchor_num), dir_targets.view(-1, self.anchor_num)) 
+
+        dir_loss = dir_loss.view(dir_logits.shape[:2]) * reg_weights # [N, H*W*anchor_num]
+
         dir_loss = dir_loss.sum() * self.dir_weight / N
+
 
         total_loss = reg_loss + conf_loss + dir_loss
 
