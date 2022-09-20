@@ -24,7 +24,7 @@ from opencood.utils.pcd_utils import \
     downsample_lidar_minimum
 from opencood.utils.transformation_utils import x1_to_x2
 from opencood.utils.common_utils import read_json
-from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
+# from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 from opencood.utils.pose_utils import add_noise_data_dict
 
 class LateFusionDataset(basedataset.BaseDataset):
@@ -200,6 +200,7 @@ class LateFusionDataset(basedataset.BaseDataset):
             cav_id_list.append(cav_id)
             lidar_pose_list.append(selected_cav_base['params']['lidar_pose'])
 
+        '''
         ########## Added by Yifan Lu 2022.8.14 ##############
         # box align to correct pose.
         if self.box_align and str(idx) in self.stage1_result.keys():
@@ -227,7 +228,8 @@ class LateFusionDataset(basedataset.BaseDataset):
                     idx_in_list = cav_id_list.index(cav_id)
                     lidar_pose_list[idx_in_list] = lidar_pose_refined
                     base_data_dict[cav_id]['params']['lidar_pose'] = lidar_pose_refined
-
+            '''
+            
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
             # find the transformation matrix from current cav to ego.

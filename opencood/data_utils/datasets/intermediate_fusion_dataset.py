@@ -23,7 +23,7 @@ from opencood.utils.transformation_utils import tfm_to_pose, x1_to_x2, x_to_worl
 from opencood.utils.pose_utils import add_noise_data_dict, remove_z_axis
 from opencood.utils.common_utils import read_json
 from opencood.utils import box_utils
-from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
+# from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 
 
 
@@ -50,7 +50,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             self.kd_flag = params['kd_flag']
         else:
             self.kd_flag = False
-
+        '''
         if "box_align" in params.keys():
             self.box_align = True
             self.stage1_result_path = params['box_align']['train_result'] if train else params['box_align']['val_result']
@@ -59,6 +59,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
         
         else:
             self.box_align = False
+        '''
 
 
     def __getitem__(self, idx):
@@ -121,6 +122,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         ########## Added by Yifan Lu 2022.8.14 ##############
         # box align to correct pose.
+        '''
         if self.box_align and str(idx) in self.stage1_result.keys():
             stage1_content = self.stage1_result[str(idx)]
             if stage1_content is not None:
@@ -146,7 +148,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                     idx_in_list = cav_id_list.index(cav_id)
                     lidar_pose_list[idx_in_list] = lidar_pose_refined
                     base_data_dict[cav_id]['params']['lidar_pose'] = lidar_pose_refined
-                
+        '''     
 
 
         for cav_id in cav_id_list:

@@ -7,6 +7,8 @@
 import argparse
 import os
 import statistics
+import sys
+sys.path.append(os.getcwd())
 
 import torch
 from torch.utils.data import DataLoader
