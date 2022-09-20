@@ -204,7 +204,7 @@ def main():
     
     if run_test:
         fusion_method = opt.fusion_method
-        cmd = f"python /GPFS/rhome/yifanlu/workspace/OpenCOOD/opencood/tools/inference_w_noise.py --model_dir {saved_path} --fusion_method {fusion_method}"
+        cmd = f"python opencood/tools/inference_w_noise.py --model_dir {saved_path} --fusion_method {fusion_method}"
         print(f"Running command: {cmd}")
         os.system(cmd)
 

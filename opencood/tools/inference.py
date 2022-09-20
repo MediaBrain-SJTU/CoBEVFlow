@@ -7,6 +7,8 @@ import argparse
 import os
 import time
 from typing import OrderedDict
+import sys
+sys.path.append(os.getcwd())
 
 import torch
 import open3d as o3d

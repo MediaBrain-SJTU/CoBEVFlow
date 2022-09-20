@@ -20,10 +20,8 @@ class SpVoxelPreprocessor(BasePreprocessor):
         super(SpVoxelPreprocessor, self).__init__(preprocess_params,
                                                   train)
         try:
-            print("====Try====")
             from spconv.utils import VoxelGeneratorV2 as VoxelGenerator
         except:
-            print("====Except====")
             from spconv.utils import VoxelGenerator      
 
         self.lidar_range = self.params['cav_lidar_range']

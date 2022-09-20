@@ -4,7 +4,7 @@ validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_v
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_test.pkl"
 
 noise_setting:
-  add_noise: True
+  add_noise: false
   args: 
     pos_std: 0.2
     rot_std: 0.2
