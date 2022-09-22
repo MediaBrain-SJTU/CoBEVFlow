@@ -129,7 +129,6 @@ class IntermediateFusionDatasetV2DAIR(intermediate_fusion_dataset_v2.Intermediat
         data[0] = OrderedDict()
         data[0]['ego'] = True
 
-                
         data[0]['params'] = OrderedDict()
         data[0]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
         # print(data[0]['params']['vehicles'])
@@ -150,7 +149,7 @@ class IntermediateFusionDatasetV2DAIR(intermediate_fusion_dataset_v2.Intermediat
         data[1]['params'] = OrderedDict()
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
 
-        data[1]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
+        data[1]['params']['vehicles'] = [] # we only load cooperative label in vehicle side
 
         virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
 

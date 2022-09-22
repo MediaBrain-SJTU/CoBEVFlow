@@ -202,3 +202,24 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
         gt_box_tensor = self.post_processor.generate_gt_bbx_by_iou(data_dict)
 
         return pred_box_tensor, pred_score, gt_box_tensor
+
+    ### rewrite post_process_no_fusion ###
+    """
+    We have to rewrite post_process for LateFusionDatasetDAIR
+    because the object id can not used for identifying the same object
+    
+    here we will to use the IoU to determine it.
+    """
+    def post_process_no_fusion(self, data_dict, output_dict_ego, return_uncertainty=False):
+        data_dict_ego = OrderedDict()
+        data_dict_ego['ego'] = data_dict['ego']
+        gt_box_tensor = self.post_processor.generate_gt_bbx_by_iou(data_dict)
+
+        if return_uncertainty:
+            pred_box_tensor, pred_score, uncertainty = \
+                self.post_processor.post_process(data_dict_ego, output_dict_ego, return_uncertainty=True)
+            return pred_box_tensor, pred_score, gt_box_tensor, uncertainty
+        else:
+            pred_box_tensor, pred_score = \
+                self.post_processor.post_process(data_dict_ego, output_dict_ego)
+            return pred_box_tensor, pred_score, gt_box_tensor

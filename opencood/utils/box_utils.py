@@ -1080,7 +1080,8 @@ def project_world_objects_dairv2x(object_list,
         'lwh' or 'hwl'
     """
     i = 0
-    for object_content in object_list:        
+
+    for object_content in object_list: 
         object_id = i
         i = i + 1
         #注意order！
@@ -1092,11 +1093,14 @@ def project_world_objects_dairv2x(object_list,
         corners_world_homo = np.pad(corners_world, ((0,0), (0,1)), constant_values=1) # [8, 4]
         corners_lidar = (world_to_lidar @ corners_world_homo.T).T 
 
+        lidar_range_z_larger = copy.deepcopy(lidar_range)
+        lidar_range_z_larger[2] -= 1
+        lidar_range_z_larger[5] += 1
 
         bbx_lidar = corners_lidar
         bbx_lidar = np.expand_dims(bbx_lidar[:, :3], 0) # [1, 8, 3]
         bbx_lidar = corner_to_center(bbx_lidar, order=order)
-        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range, order)
+        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range_z_larger, order)
         if bbx_lidar.shape[0] > 0:
             output_dict.update({object_id: bbx_lidar})
 
@@ -1131,8 +1135,7 @@ def project_world_objects_dairv2x_late(object_list,
     i = 0
     for object_content in object_list:        
         object_id = i
-        #注意order!
-        # 本身在ego坐标系
+
         if 'rotation' not in object_content:
             print(object_content)
         x = object_content['3d_location']['x']
@@ -1146,11 +1149,15 @@ def project_world_objects_dairv2x_late(object_list,
         if l==0 or h ==0 or w==0:
             continue
         i = i + 1
-        
+
+        lidar_range_z_larger = copy.deepcopy(lidar_range)
+        lidar_range_z_larger[2] -= 1
+        lidar_range_z_larger[5] += 1
+
         bbx_lidar = [x,y,z,h,w,l,rotation] if order=="hwl" else [x,y,z,l,w,h,rotation] # suppose order is in ['hwl', 'lwh']
         bbx_lidar = np.array(bbx_lidar).reshape(1,-1) # [1,7]
 
-        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range, order)
+        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range_z_larger, order)
         if bbx_lidar.shape[0] > 0:
             if object_content['type'] == "Car" or \
                object_content['type'] == "Van" or \
