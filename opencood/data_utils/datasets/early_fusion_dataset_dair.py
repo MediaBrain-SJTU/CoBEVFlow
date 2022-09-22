@@ -122,7 +122,7 @@ class EarlyFusionDatasetDAIR(early_fusion_dataset.EarlyFusionDataset):
         data[1]['params'] = OrderedDict()
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
 
-        data[1]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
+        data[1]['params']['vehicles'] = []
 
         virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
 
