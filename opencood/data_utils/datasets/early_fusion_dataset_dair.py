@@ -97,14 +97,8 @@ class EarlyFusionDatasetDAIR(early_fusion_dataset.EarlyFusionDataset):
             The dictionary contains loaded yaml params and lidar data for
             each cav.
         """
-        co_datainfo = load_json(os.path.join(self.root_dir, 'cooperative/data_info.json'))
         veh_frame_id = self.split_info[idx]
-        frame_info = {}
-        system_error_offset = {}
-        for frame_info_i in co_datainfo:
-            if frame_info_i['vehicle_image_path'].split("/")[-1].replace(".jpg", "") == veh_frame_id:
-                frame_info = frame_info_i
-                break
+        frame_info = self.co_data[veh_frame_id]
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()
         data[0] = OrderedDict() # veh-side

@@ -363,6 +363,7 @@ class IntermediateFusionDatasetV2DAIR(intermediate_fusion_dataset_v2.Intermediat
                     mask=bbx_mask)
             )
             idx_cnt += 1
+            ###
 
             if cur_mask.sum() == 0:
                 label_dict_no_coop.append({
@@ -386,8 +387,6 @@ class IntermediateFusionDatasetV2DAIR(intermediate_fusion_dataset_v2.Intermediat
                     anchors=anchor_box,
                     mask=bbx_mask)
             )
-
- 
 
         if not self.proj_first:
             label_dict_no_coop = cav_label_dict_no_coop
