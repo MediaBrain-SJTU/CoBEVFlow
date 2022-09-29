@@ -336,7 +336,7 @@ class BasePostprocessor(object):
         # tmp_object_dict = {}
         tmp_object_list = []
         cav_content = cav_contents[0]
-        tmp_object_list = cav_content['params']['vehicles'] #世界坐标系下
+        tmp_object_list = cav_content['params']['vehicles']
 
         output_dict = {}
         filter_range = self.params['anchor_args']['cav_lidar_range']
@@ -360,9 +360,8 @@ class BasePostprocessor(object):
         return object_np, mask, object_ids
 
 
-    def generate_object_center_dairv2x_late(self,
-                               cav_contents,
-                               reference_lidar_pose):
+    def generate_object_center_dairv2x_single(self,
+                               cav_contents):
         """
         Retrieve all objects in a format of (n, 7), where 7 represents
         x, y, z, l, w, h, yaw or x, y, z, h, w, l, yaw.
@@ -388,15 +387,14 @@ class BasePostprocessor(object):
         # tmp_object_dict = {}
         tmp_object_list = []
         cav_content = cav_contents[0]
-        tmp_object_list = cav_content['params']['vehicles'] #世界坐标系下
+        tmp_object_list = cav_content['params']['vehicles'] 
 
         output_dict = {}
         filter_range = self.params['anchor_args']['cav_lidar_range']
 
 
-        box_utils.project_world_objects_dairv2x_late(tmp_object_list,
+        box_utils.load_single_objects_dairv2x(tmp_object_list,
                                         output_dict,
-                                        reference_lidar_pose,
                                         filter_range,
                                         self.params['order'])
 

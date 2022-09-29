@@ -1084,8 +1084,6 @@ def project_world_objects_dairv2x(object_list,
     for object_content in object_list: 
         object_id = i
         i = i + 1
-        #注意order！
-        #坐标系转化成lidar_pose！
         lidar_to_world = x_to_world(lidar_pose) # T_world_lidar
         world_to_lidar = np.linalg.inv(lidar_to_world)
 
@@ -1105,37 +1103,26 @@ def project_world_objects_dairv2x(object_list,
             output_dict.update({object_id: bbx_lidar})
 
 
-def project_world_objects_dairv2x_late(object_list,
+def load_single_objects_dairv2x(object_list,
                           output_dict,
-                          lidar_pose,
                           lidar_range,
                           order):
     """
-    Project the objects under world coordinates into another coordinate
-    based on the provided extrinsic.
-
+    Load the objects under ego coordinates.
     Parameters
     ----------
     object_list : list
         The list contains all objects surrounding a certain cav.
-
     output_dict : dict
         key: object id, value: object bbx (xyzlwhyaw).
-
-    lidar_pose : list
-        (6, ), lidar pose under world coordinate, [x, y, z, roll, yaw, pitch].
-
     lidar_range : list
          [minx, miny, minz, maxx, maxy, maxz]
-
     order : str
         'lwh' or 'hwl'
     """
-    #没有object_id怎么办?-->这里随便设,从0开始
     i = 0
     for object_content in object_list:        
         object_id = i
-
         if 'rotation' not in object_content:
             print(object_content)
         x = object_content['3d_location']['x']
@@ -1153,7 +1140,7 @@ def project_world_objects_dairv2x_late(object_list,
         lidar_range_z_larger = copy.deepcopy(lidar_range)
         lidar_range_z_larger[2] -= 1
         lidar_range_z_larger[5] += 1
-
+        
         bbx_lidar = [x,y,z,h,w,l,rotation] if order=="hwl" else [x,y,z,l,w,h,rotation] # suppose order is in ['hwl', 'lwh']
         bbx_lidar = np.array(bbx_lidar).reshape(1,-1) # [1,7]
 
