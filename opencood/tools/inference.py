@@ -100,7 +100,7 @@ def main():
     
     noise_level = "no_noise"
 
-
+    start_time = time.time()
     for i, batch_data in enumerate(data_loader):
         print(f"{noise_level}_{i}")
         if batch_data is None:
@@ -191,6 +191,8 @@ def main():
                                     left_hand=left_hand,
                                     uncertainty=uncertainty_tensor)
         torch.cuda.empty_cache()
+    end_time = time.time()
+    print("Time Consumed: {:.2f} minutes".format((end_time - start_time))/60)
 
     _, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, noise_level)

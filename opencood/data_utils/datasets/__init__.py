@@ -14,6 +14,7 @@ from opencood.data_utils.datasets.late_fusion_dataset_dair import LateFusionData
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2 import IntermediateFusionDatasetV2
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_v2x import IntermediateFusionDatasetV2V2X
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_dair import IntermediateFusionDatasetV2DAIR
+from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_delay import IntermediateFusionDatasetDAIRAsync
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -27,7 +28,8 @@ __all__ = {
     'LateFusionDatasetDAIR': LateFusionDatasetDAIR,
     'IntermediateFusionDatasetV2': IntermediateFusionDatasetV2,
     'IntermediateFusionDatasetV2V2X': IntermediateFusionDatasetV2V2X,
-    'IntermediateFusionDatasetV2DAIR': IntermediateFusionDatasetV2DAIR
+    'IntermediateFusionDatasetV2DAIR': IntermediateFusionDatasetV2DAIR,
+    'IntermediateFusionDatasetDAIRAsync': IntermediateFusionDatasetDAIRAsync
 }
 
 # the final range for evaluation

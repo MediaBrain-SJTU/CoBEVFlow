@@ -9,6 +9,7 @@ import os
 import statistics
 import sys
 sys.path.append(os.getcwd())
+import time
 
 import torch
 from torch.utils.data import DataLoader
@@ -40,6 +41,7 @@ def main():
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
 
     print('Dataset Building')
+    start_time = time.time()
     opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)
     opencood_validate_dataset = build_dataset(hypes,
                                               visualize=False,
@@ -59,6 +61,8 @@ def main():
                             shuffle=True,
                             pin_memory=True,
                             drop_last=True)
+    end_time = time.time()
+    print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
 
     print('Creating Model')
     model = train_utils.create_model(hypes)
@@ -92,6 +96,7 @@ def main():
     # record training
     writer = SummaryWriter(saved_path)
 
+    start_time = time.time()
     print('Training start')
     epoches = hypes['train_params']['epoches']
     proj_first = hypes['fusion']['args']['proj_first']
@@ -199,12 +204,14 @@ def main():
                                     'net_epoch%d.pth' % (epoch + 1)))
         scheduler.step(epoch)
 
+    end_time = time.time()
+    print("Time consumed: %.1f" % ((end_time - start_time)/60))
     print('Training Finished, checkpoints saved to %s' % saved_path)
     torch.cuda.empty_cache()
     
     if run_test:
         fusion_method = opt.fusion_method
-        cmd = f"python opencood/tools/inference_w_noise.py --model_dir {saved_path} --fusion_method {fusion_method}"
+        cmd = f"python opencood/tools/inference.py --model_dir {saved_path} --fusion_method {fusion_method}"
         print(f"Running command: {cmd}")
         os.system(cmd)
 

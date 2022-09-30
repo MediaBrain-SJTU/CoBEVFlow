@@ -3,8 +3,11 @@ root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_train
 validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_val.pkl"
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_test.pkl"
 
+time_delay: 1
+
+
 noise_setting:
-  add_noise: True
+  add_noise: false
   args: 
     pos_std: 0.2
     rot_std: 0.2
