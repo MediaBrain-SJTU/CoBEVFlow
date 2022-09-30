@@ -1,7 +1,8 @@
 name: dair_pointpillar_early
-root_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/train.json"
-validate_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
-test_dir: "/GPFS/rhome/quanhaoli/DAIR-V2X/data/split_datas/val.json"
+data_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
 noise_setting:
   add_noise: false
