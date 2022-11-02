@@ -12,6 +12,8 @@ from datetime import datetime
 import shutil
 import torch
 import torch.optim as optim
+import numpy
+from pathlib import Path
 
 def backup_script(full_path, folders_to_save=["models", "data_utils", "utils", "loss"]):
     target_folder = os.path.join(full_path, 'scripts')
@@ -84,13 +86,14 @@ def setup_train(hypes):
     current_time = datetime.now()
 
     folder_name = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
-    folder_name = model_name + folder_name
+    folder_name = model_name + '_d_' + str(hypes['time_delay']) + folder_name
 
-    current_path = os.path.dirname(__file__)
-    current_path = os.path.join(current_path, '../logs')
+    # current_path = os.path.dirname(__file__)
+    current_path = Path("/DB/data/sizhewei")
+    current_path = os.path.join(current_path, 'logs/')
 
     full_path = os.path.join(current_path, folder_name)
-
+    print("full path is: ", full_path)
     if not os.path.exists(full_path):
         os.makedirs(full_path)
         # save the yaml file
@@ -242,10 +245,13 @@ def setup_lr_schedular(hypes, optimizer, init_epoch=None):
 def to_device(inputs, device):
     if isinstance(inputs, list):
         return [to_device(x, device) for x in inputs]
-    elif isinstance(inputs, dict):
+    elif isinstance(inputs, dict):        
         return {k: to_device(v, device) for k, v in inputs.items()}
     else:
         if isinstance(inputs, int) or isinstance(inputs, float) \
-                or isinstance(inputs, str):
+                or isinstance(inputs, str) or isinstance(inputs, numpy.int64):  
+                # AttributeError: 'numpy.int64' object has no attribute 'to'
+                # sizhewei @ 2022/10/04
+                # 添加类型 numpy.int64 数据集中的 sample_idx 是此类型
             return inputs
         return inputs.to(device)

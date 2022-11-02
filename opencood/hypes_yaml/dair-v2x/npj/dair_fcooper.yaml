@@ -4,6 +4,8 @@ root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative
 validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
+time_delay: 0
+
 noise_setting:
   add_noise: True
   args: 
@@ -74,7 +76,7 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_max
+  core_method: point_pillar_mean
   args:
     voxel_size: *voxel_size
     lidar_range: *cav_lidar

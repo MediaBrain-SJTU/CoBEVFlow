@@ -192,11 +192,11 @@ def main():
                                     uncertainty=uncertainty_tensor)
         torch.cuda.empty_cache()
     end_time = time.time()
-    print("Time Consumed: {:.2f} minutes".format((end_time - start_time))/60)
-
+    print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
+    
     _, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, noise_level)
-
+    print("Module with time delay: {}".format(hypes['time_delay']))
 
 
 

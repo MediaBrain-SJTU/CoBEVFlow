@@ -174,7 +174,6 @@ class BaseDataset(Dataset):
                             # sampling again from bev keypoints
                             self.scenario_database[i][cav_id][timestamp]['lidar_keypoints_np'] = keypoints
                                     
-
                 # Assume all cavs will have the same timestamps length. Thus
                 # we only need to calculate for the first vehicle in the
                 # scene.

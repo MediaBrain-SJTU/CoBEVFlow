@@ -67,6 +67,7 @@ def main():
     print('Creating Model')
     model = train_utils.create_model(hypes)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("device: ", device)
 
     # we assume gpu is necessary
     if torch.cuda.is_available():

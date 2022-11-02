@@ -4,17 +4,18 @@ root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
 validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
 
-comm_range: 70
+comm_range: 10000
+time_delay: 0
 
 # If you do not want pose noise,
 # set add_noise to false, and delete args.
 noise_setting:
-  add_noise: true
-  args: 
-    pos_std: 0.2
-    rot_std: 0.2
-    pos_mean: 0
-    rot_mean: 0
+  add_noise: false
+  # args: 
+  #   pos_std: 0.2
+  #   rot_std: 0.2
+  #   pos_mean: 0
+  #   rot_mean: 0
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -22,10 +23,10 @@ train_params:
   epoches: 60
   eval_freq: 1
   save_freq: 1
-  max_cav: &max_cav 5
+  max_cav: &max_cav 7
 
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetAsync' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
       # when the cur_ego_pose_flag is set to True, there is no time gap

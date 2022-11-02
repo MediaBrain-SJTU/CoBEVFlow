@@ -6,15 +6,15 @@ test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
 # If you do not want pose noise,
 # set add_noise to false, and delete args.
 noise_setting:
-  add_noise: true
-  args: 
-    pos_std: 0.2
-    rot_std: 0.2
-    pos_mean: 0
-    rot_mean: 0
+  add_noise: false
+  # args: 
+  #   pos_std: 0.2
+  #   rot_std: 0.2
+  #   pos_mean: 0
+  #   rot_mean: 0
 
-comm_range: 70
-
+comm_range: 1000000
+time_delay: 0
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -25,7 +25,7 @@ train_params:
   max_cav: &max_cav 5
 
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetAsync' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
 
@@ -135,5 +135,5 @@ optimizer:
 lr_scheduler:
   core_method: multistep #step, multistep and Exponential support
   gamma: 0.1
-  step_size: [10, 30, 40]
+  step_size: [10, 20, 30]
 

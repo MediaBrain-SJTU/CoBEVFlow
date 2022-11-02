@@ -7,6 +7,7 @@ from opencood.data_utils.datasets.early_fusion_dataset import EarlyFusionDataset
 from opencood.data_utils.datasets.early_fusion_dataset_v2x import EarlyFusionDatasetV2X
 from opencood.data_utils.datasets.early_fusion_dataset_dair import EarlyFusionDatasetDAIR
 from opencood.data_utils.datasets.intermediate_fusion_dataset import IntermediateFusionDataset
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_delay import IntermediateFusionDatasetAsync
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2x import IntermediateFusionDatasetV2X
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair import IntermediateFusionDatasetDAIR
 from opencood.data_utils.datasets.late_fusion_dataset_v2x import LateFusionDatasetV2X
@@ -22,6 +23,7 @@ __all__ = {
     'EarlyFusionDatasetV2X': EarlyFusionDatasetV2X,
     'EarlyFusionDatasetDAIR': EarlyFusionDatasetDAIR,
     'IntermediateFusionDataset': IntermediateFusionDataset,
+    'IntermediateFusionDatasetAsync': IntermediateFusionDatasetAsync, 
     'IntermediateFusionDatasetV2X': IntermediateFusionDatasetV2X,
     'IntermediateFusionDatasetDAIR': IntermediateFusionDatasetDAIR,
     'LateFusionDatasetV2X': LateFusionDatasetV2X,

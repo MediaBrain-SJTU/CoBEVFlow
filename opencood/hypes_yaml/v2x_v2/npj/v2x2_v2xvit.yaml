@@ -3,9 +3,6 @@ root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_train
 validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_val.pkl"
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/v2xsim2_info/v2xsim_infos_test.pkl"
 
-time_delay: 1
-
-
 noise_setting:
   add_noise: false
   args: 
@@ -14,7 +11,8 @@ noise_setting:
     pos_mean: 0
     rot_mean: 0
 
-comm_range: 50
+comm_range: 10000
+time_delay: 0
 
 
 yaml_parser: "load_point_pillar_params"

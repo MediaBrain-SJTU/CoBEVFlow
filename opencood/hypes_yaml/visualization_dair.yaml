@@ -1,21 +1,18 @@
-name: dair_npj_disconet_w
+# this yaml is only for visualization
+name: visualization
+
+yaml_parser: "load_voxel_params"
 data_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
 root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
 validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
 noise_setting:
   add_noise: false
-  args: 
-    pos_std: 0.2
-    rot_std: 0.2
-    pos_mean: 0
-    rot_mean: 0
 
-comm_range: 100000000
+
 time_delay: 5
 
-yaml_parser: "load_point_pillar_params"
+
 train_params:
   batch_size: &batch_size 4
   epoches: 40
@@ -23,9 +20,11 @@ train_params:
   save_freq: 2
   max_cav: &max_cav 5
 
+only_vis_ego: False
+comm_range: 100000000000
 
 fusion:
-  core_method: 'IntermediateFusionDatasetDAIRAsync' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetDAIR' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
     clip_pc: false
@@ -97,30 +96,3 @@ model:
       compression: 0
 
     anchor_num: *achor_num
-
-kd_flag:
-  teacher_model: point_pillar_disconet_teacher
-  teacher_model_config: *model_args
-  teacher_path: "/GPFS/rhome/yifanlu/OpenCOOD/opencood/logs/dair_pointpillar_early_2022_09_01_00_54_33/net_epoch29.pth"
-
-
-loss:
-  core_method: point_pillar_disconet_loss
-  args:
-    cls_weight: 1.0
-    reg: 2.0
-    kd_weight: 10000
-    decoder_kd: false
-
-optimizer:
-  core_method: Adam
-  lr: 0.002
-  args:
-    eps: 1e-10
-    weight_decay: 1e-4
-
-lr_scheduler:
-  core_method: multistep #step, multistep and Exponential support
-  gamma: 0.1
-  step_size: [15, 25]
-

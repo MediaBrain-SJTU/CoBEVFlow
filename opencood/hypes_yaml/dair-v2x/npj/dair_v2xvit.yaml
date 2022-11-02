@@ -4,8 +4,6 @@ root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative
 validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
-time_delay: 1
-
 noise_setting:
   add_noise: True
   args: 
@@ -14,7 +12,8 @@ noise_setting:
     pos_mean: 0
     rot_mean: 0
 
-comm_range: 100
+comm_range: 100000000
+time_delay: 0
 
 
 yaml_parser: "load_point_pillar_params"

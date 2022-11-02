@@ -1,24 +1,28 @@
 # -*- coding: utf-8 -*-
 # Author: Runsheng Xu <rxx3386@ucla.edu>, Yifan Lu
+# Modified: sizhewei @ 2022/10/12
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 """
 Dataset class for early fusion
 """
 from collections import OrderedDict
-
+import os
 import numpy as np
 import torch
 import math
 import copy
 
 import opencood.data_utils.post_processor as post_processor
+import opencood.utils.pcd_utils as pcd_utils
+from opencood.utils.keypoint_utils import bev_sample, get_keypoints
 from opencood.data_utils.datasets import basedataset
 from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.hypes_yaml.yaml_utils import load_yaml
 from opencood.utils.pcd_utils import \
     mask_points_by_range, mask_ego_points, shuffle_points, \
     downsample_lidar_minimum
+from opencood.data_utils.augmentor.data_augmentor import DataAugmentor
 from opencood.utils.transformation_utils import tfm_to_pose, x1_to_x2, x_to_world
 from opencood.utils.pose_utils import add_noise_data_dict, remove_z_axis
 from opencood.utils.common_utils import read_json
@@ -26,14 +30,151 @@ from opencood.utils import box_utils
 # from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 
 
-class IntermediateFusionDataset(basedataset.BaseDataset):
+class IntermediateFusionDatasetAsync(basedataset.BaseDataset):
     """
     This class is for intermediate fusion where each vehicle transmit the
     deep features to ego.
     """
     def __init__(self, params, visualize, train=True):
-        super(IntermediateFusionDataset, self). \
-            __init__(params, visualize, train)
+        self.params = params
+        self.visualize = visualize
+        self.train = train
+
+        self.pre_processor = None
+        self.post_processor = None
+        self.data_augmentor = DataAugmentor(params['data_augment'],
+                                            train)
+
+        if 'time_delay' in params: # number of frames-delay
+            self.k = params['time_delay'] 
+        else:
+            self.k = 0
+
+        if 'select_kp' in params:
+            self.select_keypoint = params['select_kp']
+        else:
+            self.select_keypoint = None
+
+        assert 'proj_first' in params['fusion']['args']
+        if params['fusion']['args']['proj_first']:
+            self.proj_first = True
+        else:
+            self.proj_first = False
+
+        if self.train:
+            root_dir = params['root_dir']
+        else:
+            root_dir = params['validate_dir']
+        
+        print("Dataset dir:", root_dir)
+
+        if 'train_params' not in params or\
+                'max_cav' not in params['train_params']:
+            self.max_cav = 5
+        else:
+            self.max_cav = params['train_params']['max_cav']
+
+        # first load all paths of different scenarios
+        scenario_folders = sorted([os.path.join(root_dir, x)
+                                   for x in os.listdir(root_dir) if
+                                   os.path.isdir(os.path.join(root_dir, x))])
+        scenario_folders_name = sorted([x
+                                   for x in os.listdir(root_dir) if
+                                   os.path.isdir(os.path.join(root_dir, x))])
+        # Structure: {scenario_id : {cav_1 : {timestamp1 : {yaml: path,
+        # lidar: path, cameras:list of path}}}}
+        self.scenario_database = OrderedDict()
+        self.len_record = []
+
+        # loop over all scenarios
+        for (i, scenario_folder) in enumerate(scenario_folders):
+            self.scenario_database.update({i: OrderedDict()})
+
+            # at least 1 cav should show up
+            cav_list = sorted([x for x in os.listdir(scenario_folder)
+                               if os.path.isdir(
+                    os.path.join(scenario_folder, x))])
+            assert len(cav_list) > 0
+
+            # loop over all CAV data
+            for (j, cav_id) in enumerate(cav_list):
+                if j > self.max_cav - 1:
+                    print('too many cavs')
+                    break
+                self.scenario_database[i][cav_id] = OrderedDict()
+
+                # save all yaml files to the dictionary
+                cav_path = os.path.join(scenario_folder, cav_id)
+
+                # use the frame number as key, the full path as the values
+                yaml_files = \
+                    sorted([os.path.join(cav_path, x)
+                            for x in os.listdir(cav_path) if
+                            x.endswith('.yaml')])
+                timestamps = self.extract_timestamps(yaml_files)
+
+                if self.k > 0:
+                    if j == 0: # ego
+                        timestamps = timestamps[self.k:]        # 从第k个往后
+                    else:
+                        timestamps = timestamps[:-self.k]       # 丢掉最后k个 
+
+                for timestamp in timestamps:
+                    self.scenario_database[i][cav_id][timestamp] = \
+                        OrderedDict()
+
+                    yaml_file = os.path.join(cav_path,
+                                             timestamp + '.yaml')
+                    lidar_file = os.path.join(cav_path,
+                                              timestamp + '.pcd')
+                    camera_files = self.load_camera_files(cav_path, timestamp)
+
+                    self.scenario_database[i][cav_id][timestamp]['yaml'] = \
+                        yaml_file
+                    self.scenario_database[i][cav_id][timestamp]['lidar'] = \
+                        lidar_file
+                    self.scenario_database[i][cav_id][timestamp]['camera0'] = \
+                        camera_files
+
+                    if self.select_keypoint:
+                        if (self.proj_first and j == 0) or (not self.proj_first):
+                            # when init the dataset, it read over all pcd files.
+                            # it maybe slow, but no need to perform keypoint sampling for each time.\
+                            kp_file_path = f"{self.params['select_kp']['kp_path']}_{self.params['select_kp']['n_samples']}/{scenario_folders_name[i]}/{cav_id}/{timestamp}.npy"
+                            kp_dir = kp_file_path.rsplit('/',1)[0]
+
+                            if not os.path.exists(kp_dir):
+                                os.makedirs(kp_dir)
+
+                            if os.path.exists(kp_file_path):
+                                keypoints = np.load(kp_file_path)
+                            else:
+                                pcd_np = pcd_utils.pcd_to_np(lidar_file)
+                                bev_keypoints = bev_sample(pcd_np,
+                                            self.params['select_kp']['lidar_range'],
+                                            self.params['select_kp']['n_samples'],
+                                            mode='uniform',
+                                            all_samples=False)
+
+                                np.save(kp_file_path, bev_keypoints)
+                                print(f"saving {kp_file_path} in basedataset")
+                                keypoints = bev_keypoints
+                            # sampling again from bev keypoints
+                            self.scenario_database[i][cav_id][timestamp]['lidar_keypoints_np'] = keypoints
+                                    
+                # Assume all cavs will have the same timestamps length. Thus
+                # we only need to calculate for the first vehicle in the
+                # scene.
+                if j == 0:
+                    # we regard the agent with the minimum id as the ego
+                    self.scenario_database[i][cav_id]['ego'] = True
+                    if not self.len_record:
+                        self.len_record.append(len(timestamps))
+                    else:
+                        prev_last = self.len_record[-1]
+                        self.len_record.append(prev_last + len(timestamps))
+                else:
+                    self.scenario_database[i][cav_id]['ego'] = False
 
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
@@ -48,16 +189,56 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             self.kd_flag = params['kd_flag']
         else:
             self.kd_flag = False
-        '''
-        if "box_align" in params.keys():
-            self.box_align = True
-            self.stage1_result_path = params['box_align']['train_result'] if train else params['box_align']['val_result']
-            self.stage1_result = read_json(self.stage1_result_path)
-            self.box_align_args = params['box_align']['args']
-        
-        else:
-            self.box_align = False
-        '''
+
+        print("OPV2V ASync dataset with {} time delay initialized! {} samples totally!".format(self.k, self.len_record[-1]))
+
+    def retrieve_base_data(self, idx):
+        """
+        Given the index, return the corresponding data.
+
+        Parameters
+        ----------
+        idx : int
+            Index given by dataloader.
+
+        Returns
+        -------
+        data : dict
+            The dictionary contains loaded yaml params and lidar data for
+            each cav.
+        """
+        # we loop the accumulated length list to see get the scenario index
+        scenario_index = 0
+        for i, ele in enumerate(self.len_record):
+            if idx < ele:
+                scenario_index = i
+                break
+        scenario_database = self.scenario_database[scenario_index]
+
+        data = OrderedDict()
+        # load files for all CAVs
+        for cav_id, cav_content in scenario_database.items():
+            # check the timestamp index
+            timestamp_index = idx if scenario_index == 0 else \
+                idx - self.len_record[scenario_index - 1]
+            # retrieve the corresponding timestamp key
+            # timestamp_key = self.return_timestamp_key_async(scenario_database, cav_id, 
+            #                                         timestamp_index)
+            timestamp_key = list(cav_content.items())[timestamp_index][0]
+            data[cav_id] = OrderedDict()
+            data[cav_id]['ego'] = cav_content['ego']
+
+            # todo: load camera image in the future version
+            # load the corresponding data into the dictionary
+            data[cav_id]['params'] = \
+                load_yaml(cav_content[timestamp_key]['yaml'])
+            data[cav_id]['lidar_np'] = \
+                pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+            
+            if self.select_keypoint and 'lidar_keypoints_np' in cav_content[timestamp_key]:
+                data[cav_id]['lidar_keypoints_np'] = cav_content[timestamp_key]['lidar_keypoints_np']
+
+        return data
 
 
     def __getitem__(self, idx):
@@ -333,6 +514,30 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             )
 
         return selected_cav_processed
+
+    @staticmethod
+    def return_timestamp_key_async(cav_content, timestamp_index):
+        """
+        Given the timestamp index, return the correct timestamp key, e.g.
+        2 --> '000078'.
+
+        Parameters
+        ----------
+        scenario_database : OrderedDict
+            The dictionary contains all contents in the current scenario.
+
+        timestamp_index : int
+            The index for timestamp.
+
+        Returns
+        -------
+        timestamp_key : str
+            The timestamp key saved in the cav dictionary.
+        """
+        # retrieve the correct index
+        timestamp_key = list(cav_content.items())[timestamp_index][0]
+
+        return timestamp_key
 
     @staticmethod
     def merge_features_to_dict(processed_feature_list):

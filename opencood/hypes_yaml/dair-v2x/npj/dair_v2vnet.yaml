@@ -12,8 +12,8 @@ noise_setting:
     pos_mean: 0
     rot_mean: 0
 
-comm_range: 100
-
+comm_range: 100000000
+time_delay: 10
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -25,7 +25,7 @@ train_params:
 
 
 fusion:
-  core_method: 'IntermediateFusionDatasetDAIR' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetDAIRAsync' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
     clip_pc: false
