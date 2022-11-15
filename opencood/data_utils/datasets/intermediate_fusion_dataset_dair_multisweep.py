@@ -2,7 +2,7 @@
 # Modified: Sizhe Wei <sizhewei@sjtu.edu.cn>
 
 """
-Dataset class for intermediate fusion with time delay k
+Dataset class for intermediate fusion with past k frames
 """
 import random
 import math

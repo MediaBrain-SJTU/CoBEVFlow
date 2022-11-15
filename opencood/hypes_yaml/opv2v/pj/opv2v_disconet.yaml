@@ -1,4 +1,4 @@
-name: OPV2V_npj_disconet_w
+name: OPV2V_pj_disconet_w
 root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
 validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
@@ -6,24 +6,26 @@ test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
 # If you do not want pose noise,
 # set add_noise to false, and delete args.
 noise_setting:
-  add_noise: true
-  args: 
-    pos_std: 0.2
-    rot_std: 0.2
-    pos_mean: 0
-    rot_mean: 0
+  add_noise: false
+  # args: 
+  #   pos_std: 0.2
+  #   rot_std: 0.2
+  #   pos_mean: 0
+  #   rot_mean: 0
 
 comm_range: 70
+time_delay: 2
+num_sweep_frames: 10
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 4
+  batch_size: &batch_size 2
   epoches: 30
   eval_freq: 2
   save_freq: 1
 
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetDAIRAsync, IntermediateFusionDatasetMultisweep supported
   args: 
     proj_first: true
 
