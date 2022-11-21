@@ -68,6 +68,7 @@ def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
 
         # sort the prediction bounding box by score
         score_order_descend = np.argsort(-det_score)
+        det_score = det_score[score_order_descend]
         det_polygon_list = list(common_utils.convert_format(det_boxes))
         gt_polygon_list = list(common_utils.convert_format(gt_boxes))
 
@@ -86,7 +87,7 @@ def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
 
             gt_index = np.argmax(ious)
             gt_polygon_list.pop(gt_index)
-
+        result_stat[iou_thresh]['score'] += det_score.tolist()
     result_stat[iou_thresh]['fp'] += fp
     result_stat[iou_thresh]['tp'] += tp
     result_stat[iou_thresh]['gt'] += gt
@@ -104,9 +105,14 @@ def calculate_ap(result_stat, iou):
     """
     iou_5 = result_stat[iou]
 
-    fp = iou_5['fp']
-    tp = iou_5['tp']
-    assert len(fp) == len(tp)
+    fp = np.array(iou_5['fp'])
+    tp = np.array(iou_5['tp'])
+    score = np.array(iou_5['score'])
+    assert len(fp) == len(tp) and len(tp) == len(score)
+
+    sorted_index = np.argsort(-score)
+    fp = fp[sorted_index].tolist()
+    tp = tp[sorted_index].tolist()
 
     gt_total = iou_5['gt']
 
