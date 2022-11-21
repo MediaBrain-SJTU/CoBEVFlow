@@ -94,9 +94,9 @@ def main():
                             drop_last=False)
     
     # Create the dictionary for evaluation
-    result_stat = {0.3: {'tp': [], 'fp': [], 'gt': 0},
-                0.5: {'tp': [], 'fp': [], 'gt': 0},
-                0.7: {'tp': [], 'fp': [], 'gt': 0}}
+    result_stat = {0.3: {'tp': [], 'fp': [], 'gt': 0, 'score': []},
+                0.5: {'tp': [], 'fp': [], 'gt': 0, 'score': []},
+                0.7: {'tp': [], 'fp': [], 'gt': 0, 'score': []}}
     
     noise_level = "no_noise"
 
