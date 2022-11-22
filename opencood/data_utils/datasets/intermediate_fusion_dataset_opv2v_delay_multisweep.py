@@ -195,38 +195,38 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 			{
 				cav_id_1 : {
 					'ego' : true,
-					curr : {
-						[0]:{						#      |       | label
-							'params': (yaml),
-							'lidar_np': (numpy)
-						},
+					curr : {						#      |       | label
+						'params': (yaml),
+						'lidar_np': (numpy),
+						'timestamp': string
 					},
 					past_k : {		# (k) totally
-						[0]:{						# pose | lidar | 
+						[0]:{		(0)				# pose | lidar | 
 							'params': (yaml),
-							'lidar_np': (numpy)
+							'lidar_np': (numpy),
+							'timestamp': string
 						},
-						[0-1] : {},					# pose | lidar |
+						[1] : {},	(0-1)			# pose | lidar |
 						...,						# pose | lidar |
-						[0-(k-1)] : {}				# pose | lidar |
+						[k-1] : {} (0-(k-1))		# pose | lidar |
 					}
 					
 				}, 
 				cav_id_2 : {
 					'ego': false, 
-					curr : {
-						[0]:{						#      |       | label
+					curr : 							#      |       | label
 							'params': (yaml),
-							'lidar_np': (numpy)
-						},
+							'lidar_np': (numpy),
+							'timestamp': string
 					},
 					past_k: {		# (k) totally
-						[0 - \tau - 1] : {			# pose | lidar |
+						[0] : {		(0 - \tau - 1)	# pose | lidar |
 							'params': (yaml),
-							'lidar_np': (numpy)
+							'lidar_np': (numpy),
+							'timestamp': string
 						}			
 						..., 						# pose | lidar |
-						[0 - \tau - k]:{}			# pose | lidar |
+						[k-1]:{}	(0 - \tau - k)	# pose | lidar |
 					},
 				}, 
 				...
@@ -269,6 +269,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 					load_yaml(cav_content[timestamp_key]['yaml'])
 			data[cav_id]['curr']['lidar_np'] = \
 					pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+			data[cav_id]['curr']['timestamp'] = \
+					timestamp_key
 
 			# past k frames
 			if data[cav_id]['ego']:
@@ -287,6 +289,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 					load_yaml(cav_content[timestamp_key]['yaml'])
 				data[cav_id]['past_k'][i]['lidar_np'] = \
 					pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+				data[cav_id]['past_k'][i]['timestamp'] = \
+					timestamp_key
 
 		return data
 
@@ -350,7 +354,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 		processed_features = [] # non-ego
 		object_stack = []
 		object_id_stack = []
-# TODO: go on 11/16 22:00		
+		
 		for cav_id in cav_id_list:
 			selected_cav_base = base_data_dict[cav_id]
 			# TODO: 完成 get_itme_single_car
@@ -455,7 +459,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 		return processed_data_dict
 
 
-	def get_item_single_car(self, selected_cav_base, ego_pose, ego_flag, idx):
+	def get_item_single_car(self, selected_cav_base, ego_pose, idx):
 		"""
 		Project the lidar and bbx to ego space first, and then do clipping.
 
@@ -464,23 +468,23 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 		selected_cav_base : dict
 			The dictionary contains a single CAV's raw information, 
 			structure: {
-				'ego' : true / false
-				curr : {
-					[0]:{						#      |       | label
-						'params': (yaml),
-						'lidar_np': (numpy)
-					},
+				'ego' : true / false,
+				curr : {										#      |       | label
+					'params': (yaml),
+					'lidar_np': (numpy),
+					'timestamp': string
 				},
 				past_k : {		# (k) totally
-					[0]:{						# pose | lidar | 
+					[0]:{		(0) / (0 - \tau - 1)			# pose | lidar | 
 						'params': (yaml),
-						'lidar_np': (numpy)
+						'lidar_np': (numpy),
+						'timestamp': string
 					},
-					[0-1] : {},					# pose | lidar |
-					...,						# pose | lidar |
-					[0-(k-1)] : {}				# pose | lidar |
-				}
-			}
+					[1] : {},	(0-1) / (0-\tau-(k-1))			# pose | lidar |
+					...,										# pose | lidar |
+					[k-1] : {} 	(0-(k-1)) / (0-\tau-k)			# pose | lidar |
+				}	
+			}, 
 		ego_pose : list, length 6
 			The ego vehicle lidar pose under world coordinate.
 		# ego_pose_clean : list, length 6
@@ -497,52 +501,43 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 			The dictionary contains the cav's processed information.
 		"""
 		selected_cav_processed = {}
+		
+		# past k poses
+		past_k_poses = []
+		# past k lidars
+		past_k_lidars = []
+		# past k timestamps
+		past_k_timestamps = []
+		for i in range(self.k):
+			transformation_matrix = \
+            	x1_to_x2(selected_cav_base['past_k']['params']['lidar_pose'], ego_pose) # T_ego_cav
+			lidar_np = selected_cav_base['lidar_np']
+			lidar_np = shuffle_points(lidar_np)
+			# remove points that hit itself
+			lidar_np = mask_ego_points(lidar_np)
+			# project the lidar to ego space
+			# x,y,z in ego space
+			projected_lidar = \
+				box_utils.project_points_by_matrix_torch(lidar_np[:, :3],
+															transformation_matrix)
+			lidar_np = mask_points_by_range(lidar_np,
+													self.params['preprocess'][
+														'cav_lidar_range'])
+			processed_lidar = self.pre_processor.preprocess(lidar_np)
 
-		# calculate the transformation matrix
+
+		# curr label at ego coordinates
 		transformation_matrix = \
-			x1_to_x2(selected_cav_base['params']['lidar_pose'],
-					ego_pose) # T_ego_cav
-
-		# filter lidar
-		lidar_np = selected_cav_base['lidar_np']
-		lidar_np = shuffle_points(lidar_np)
-		# remove points that hit itself
-		lidar_np = mask_ego_points(lidar_np)
-		# project the lidar to ego space
-		# x,y,z in ego space
-		projected_lidar = \
-			box_utils.project_points_by_matrix_torch(lidar_np[:, :3],
-														transformation_matrix)
-		# if self.kd_flag:
-			# lidar_np_clean = copy.deepcopy(lidar_np)
-
-		if self.proj_first:
-			lidar_np[:, :3] = projected_lidar
-			
-		lidar_np = mask_points_by_range(lidar_np,
-										self.params['preprocess'][
-											'cav_lidar_range'])
+            x1_to_x2(selected_cav_base['curr']['params']['lidar_pose'], ego_pose) # T_ego_cav
+		object_bbx_center, object_bbx_mask, object_ids = \
+			self.generate_object_center([selected_cav_base['curr']], ego_pose)  # opencood/data_utils/post_processor/base_postprocessor.py
 		
-		processed_lidar = self.pre_processor.preprocess(lidar_np)
-
-		if ego_flag:
-			# retrieve objects under ego coordinates
-			# this is used to generate accurate GT bounding box.
-			object_bbx_center, object_bbx_mask, object_ids = self.generate_object_center([selected_cav_base],
-														ego_pose)
-
-			selected_cav_processed.update(
-				{'object_bbx_center': object_bbx_center[object_bbx_mask == 1],
-				'object_ids': object_ids,
-				'projected_lidar': projected_lidar,
-				'processed_features': processed_lidar,
-				'transformation_matrix': transformation_matrix})
-		
-		else:
-			selected_cav_processed.update(
-				{'projected_lidar': projected_lidar,
-				'processed_features': processed_lidar,
-				'transformation_matrix': transformation_matrix})
+		selected_cav_processed.update(
+            {'object_bbx_center': object_bbx_center[object_bbx_mask == 1],
+             'object_ids': object_ids,
+             'projected_lidar': projected_lidar,
+             'processed_features': processed_lidar,
+             'transformation_matrix': transformation_matrix})
 
 		return selected_cav_processed
 
