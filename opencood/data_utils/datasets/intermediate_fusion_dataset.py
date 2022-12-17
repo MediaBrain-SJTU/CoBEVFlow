@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import math
 import copy
+import time
 
 import opencood.data_utils.post_processor as post_processor
 from opencood.data_utils.datasets import basedataset
@@ -34,7 +35,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
     def __init__(self, params, visualize, train=True):
         super(IntermediateFusionDataset, self). \
             __init__(params, visualize, train)
-
+        
+        self.times = []
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
         # projected instead.
@@ -61,8 +63,10 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
 
     def __getitem__(self, idx):
+        self.times = []
+        self.times.append(time.time())
         base_data_dict = self.retrieve_base_data(idx)
-
+        self.times.append(time.time())
         base_data_dict = add_noise_data_dict(base_data_dict,self.params['noise_setting'])
 
         processed_data_dict = OrderedDict()
@@ -129,7 +133,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                 pred_corners_list = stage1_content['pred_corner3d_np_list']
                 pred_corners_list = [np.array(corners, dtype=np.float64) for corners in pred_corners_list]
                 uncertainty_list = stage1_content['uncertainty_np_list']
-                uncertainty_list = [np.array(uncertainty, dtype=np.float64) for uncertainty in uncertainty_list]
+                uncertainty_list = [np.array(uncertainty, dtype=np.float64) for uncertain ty in uncertainty_list]
                 stage1_lidar_pose_list = [base_data_dict[cav_id]['params']['lidar_pose'] for cav_id in cav_id_list_stage1]
                 stage1_lidar_pose = np.array(stage1_lidar_pose_list)
 
@@ -147,7 +151,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                     lidar_pose_list[idx_in_list] = lidar_pose_refined
                     base_data_dict[cav_id]['params']['lidar_pose'] = lidar_pose_refined
         '''     
-
+        self.times.append(time.time())
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
 
@@ -172,7 +176,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                 projected_lidar_stack.append(
                     selected_cav_processed['projected_lidar'])
 
-
+        self.times.append(time.time())
         ########## Added by Yifan Lu 2022.4.5 ################
         # filter those out of communicate range
         # then we can calculate get_pairwise_transformation
@@ -212,7 +216,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
         cav_num = len(processed_features)
 
         merged_feature_dict = self.merge_features_to_dict(processed_features)
-
+        self.times.append(time.time())
         # generate the anchor boxes
         anchor_box = self.post_processor.generate_anchor_box()
 
@@ -222,7 +226,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                 gt_box_center=object_bbx_center,
                 anchors=anchor_box,
                 mask=mask)
-
+        self.times.append(time.time())
         processed_data_dict['ego'].update(
             {'object_bbx_center': object_bbx_center,
              'object_bbx_mask': mask,
@@ -233,7 +237,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
              'cav_num': cav_num,
              'pairwise_t_matrix': pairwise_t_matrix,
              'lidar_poses_clean': lidar_poses_clean,
-             'lidar_poses': lidar_poses})
+             'lidar_poses': lidar_poses,
+             'times': (np.array(self.times[1:]) - np.array(self.times[:-1]))})
 
         if self.kd_flag:
             processed_data_dict['ego'].update({'teacher_processed_lidar':
@@ -386,6 +391,9 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
         if self.visualize:
             origin_lidar = []
 
+        # for debug use:
+        time_consume = np.zeros_like(batch[0]['ego']['times'])
+
         for i in range(len(batch)):
             ego_dict = batch[i]['ego']
             object_bbx_center.append(ego_dict['object_bbx_center'])
@@ -406,6 +414,11 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             if self.visualize:
                 origin_lidar.append(ego_dict['origin_lidar'])
 
+            time_consume += ego_dict['times']
+
+        # for debug use: 
+        time_consume = torch.from_numpy(time_consume)
+
         # convert to numpy, (B, max_num, 7)
         object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
         object_bbx_mask = torch.from_numpy(np.array(object_bbx_mask))
@@ -417,7 +430,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         # [sum(record_len), C, H, W]
         processed_lidar_torch_dict = \
-            self.pre_processor.collate_batch(merged_feature_dict)
+            self.pre_processor.collate_batch(merged_feature_dict)  # coords 增加了 batch_id 维度，[x, y, z] -> [id, x, y, z]
         # [2, 3, 4, ..., M], M <= max_cav
         record_len = torch.from_numpy(np.array(record_len, dtype=int))
         # [[N1, 6], [N2, 6]...] -> [[N1+N2+...], 6]
@@ -443,7 +456,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                                    'object_ids': object_ids[0],
                                    'pairwise_t_matrix': pairwise_t_matrix,
                                    'lidar_pose_clean': lidar_pose_clean,
-                                   'lidar_pose': lidar_pose})
+                                   'lidar_pose': lidar_pose,
+                                   'times': time_consume})
 
 
         if self.visualize:

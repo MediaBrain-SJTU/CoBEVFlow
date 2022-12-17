@@ -8,8 +8,8 @@ class PointPillarScatter(nn.Module):
 
         self.model_cfg = model_cfg
         self.num_bev_features = self.model_cfg['num_features']
-        self.nx, self.ny, self.nz = model_cfg['grid_size']  # [704, 200, 1] 
-
+        self.nx, self.ny, self.nz = model_cfg['grid_size']  # [504, 200, 1] 
+        # 这部分的参数参考 opencood/hypes_yaml/yaml_utils.py 中的 load_point_pillar_params 函数
         assert self.nz == 1
 
     def forward(self, batch_dict):
@@ -45,13 +45,13 @@ class PointPillarScatter(nn.Module):
                 self.num_bev_features,
                 self.nz * self.nx * self.ny,
                 dtype=pillar_features.dtype,
-                device=pillar_features.device)
-            # batch_index的mask
+                device=pillar_features.device) #(C, x_grid * y_grid * z_grid)
+            # batch_index的mask, (M, 1)
             batch_mask = coords[:, 0] == batch_idx
             # 根据mask提取坐标
             this_coords = coords[batch_mask, :] # (batch_idx_voxel,4)  # zyx order, x in [0,706], y in [0,200]
             # 这里的坐标是b,z,y和x的形式,且只有一层，因此计算索引的方式如下
-            indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3]
+            indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3]  # idz*ny*nx + idy*nx + idx
             # 转换数据类型
             indices = indices.type(torch.long)
             # 根据mask提取pillar_features
@@ -63,10 +63,10 @@ class PointPillarScatter(nn.Module):
             batch_spatial_features.append(spatial_feature) 
 
         batch_spatial_features = \
-            torch.stack(batch_spatial_features, 0)
+            torch.stack(batch_spatial_features, 0) #(batch_size, 64, self.nz * self.nx * self.ny)
         batch_spatial_features = \
             batch_spatial_features.view(batch_size, self.num_bev_features *
-                                        self.nz, self.ny, self.nx) # It put y axis(in lidar frame) as image height. [..., 200, 704]
+                                        self.nz, self.ny, self.nx) # It put y axis(in lidar frame) as image height. [..., 200, 504]
         batch_dict['spatial_features'] = batch_spatial_features
 
         return batch_dict

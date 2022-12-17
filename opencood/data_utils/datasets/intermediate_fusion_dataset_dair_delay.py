@@ -131,7 +131,7 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
             load_json(osp.join(self.root_dir, "infrastructure-side/data_info.json"))
         )
         self.co_idx2info = build_idx_to_co_info(
-            load_json(osp.join(self.root_dir, "cooperative/data_info_deleted.json"))
+            load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
         )
 
         self.data_split = load_json(split_dir)

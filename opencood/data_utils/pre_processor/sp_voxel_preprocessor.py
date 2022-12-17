@@ -32,6 +32,12 @@ class SpVoxelPreprocessor(BasePreprocessor):
             self.max_voxels = self.params['args']['max_voxel_train']
         else:
             self.max_voxels = self.params['args']['max_voxel_test']
+        
+        # whether there are more than on frames in the past
+        if 'past_k' in preprocess_params and preprocess_params['past_k'] > 0:
+            self.sweep = True
+        else:
+            self.sweep = False
 
         grid_size = (np.array(self.lidar_range[3:6]) -
                      np.array(self.lidar_range[0:3])) / np.array(self.voxel_size)
@@ -76,7 +82,6 @@ class SpVoxelPreprocessor(BasePreprocessor):
         processed_batch : dict
             Updated lidar batch.
         """
-
         if isinstance(batch, list):
             return self.collate_batch_list(batch)
         elif isinstance(batch, dict):

@@ -202,7 +202,7 @@ def downsample_lidar_minimum(pcd_np_list):
 
     return pcd_np_list
 
-def read_pcd(pcd_path):
+def  read_pcd(pcd_path):
     pcd = pypcd.PointCloud.from_path(pcd_path)
     time = None
     pcd_np_points = np.zeros((pcd.points, 4), dtype=np.float32)

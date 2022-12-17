@@ -81,7 +81,7 @@ class ResNetBEVBackbone(nn.Module):
         self.num_bev_features = c_in
 
     def forward(self, data_dict):
-        spatial_features = data_dict['spatial_features']
+        spatial_features = data_dict['spatial_features'] # (batch_size, feature, H, W)
 
         x = self.resnet(spatial_features)  # tuple of features
         ups = []
@@ -93,7 +93,7 @@ class ResNetBEVBackbone(nn.Module):
                 ups.append(x[i])
 
         if len(ups) > 1:
-            x = torch.cat(ups, dim=1)
+            x = torch.cat(ups, dim=1) # feature dim 
         elif len(ups) == 1:
             x = ups[0]
 

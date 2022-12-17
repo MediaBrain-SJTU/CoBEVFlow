@@ -203,6 +203,35 @@ class VoxelPostprocessor(BasePostprocessor):
                       'targets': targets}
 
         return label_dict
+    
+    @staticmethod
+    def merge_label_to_dict(label_k_list):
+        """
+        Customized collate function for target label generation.
+
+        Parameters
+        ----------
+        label_batch_list : list
+            The list of dictionary  that contains all labels for several
+            frames.
+
+        Returns
+        -------
+        target_batch : dict
+            Reformatted labels in torch tensor.
+        """
+        pos_equal_one = []
+        neg_equal_one = []
+        targets = []
+
+        for i in range(len(label_k_list)):
+            pos_equal_one.append(label_k_list[i]['pos_equal_one'])
+            neg_equal_one.append(label_k_list[i]['neg_equal_one'])
+            targets.append(label_k_list[i]['targets'])
+
+        return {'targets': targets,
+                'pos_equal_one': pos_equal_one,
+                'neg_equal_one': neg_equal_one}
 
     @staticmethod
     def collate_batch(label_batch_list):

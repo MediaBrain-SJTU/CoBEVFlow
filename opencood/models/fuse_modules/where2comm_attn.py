@@ -271,9 +271,9 @@ class Where2comm(nn.Module):
                 x = feats[i] if with_resnet else backbone.blocks[i](x)
 
                 ############ 1. Communication (Mask the features) #########
-                if i==0:
+                if i==0:# TODO: mask conv
                     if self.communication:
-                        batch_confidence_maps = self.regroup(rm, record_len)
+                        batch_confidence_maps = self.regroup(rm, record_len)# cls_head 出来的 map 
                         _, communication_masks, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                         x = x * communication_masks
                     else:

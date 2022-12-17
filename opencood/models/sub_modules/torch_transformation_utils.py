@@ -327,7 +327,7 @@ def warp_affine_simple(src, M, dsize,
     B, C, H, W = src.size()
     grid = F.affine_grid(M,
                          [B, C, dsize[0], dsize[1]],
-                         align_corners=align_corners).to(src)
+                         align_corners=align_corners).to(src) # .to() 统一数据格式 float32
     return F.grid_sample(src, grid, align_corners=align_corners)
 
 def warp_affine(

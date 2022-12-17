@@ -1,5 +1,6 @@
-name: opv2v_npj_where2comm_max_multiscale_resnet
-root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
+name: opv2v_npj_raindrop_attn
+# root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
+root_dir: "/DB/data/sizhewei/OPV2Vpart/train/"
 validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
 test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
 
@@ -22,11 +23,11 @@ train_params:
   save_freq: 2
   max_cav: &max_cav 5
 
-num_sweep_frames: &past_k 1
+num_sweep_frames: &past_k 2
 time_delay: 0
 
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
+  core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
   args:
     proj_first: false
     clip_pc: false
@@ -76,7 +77,7 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_where2comm
+  core_method: point_pillar_where2comm_attn
   
   args:
     voxel_size: *voxel_size
@@ -85,6 +86,7 @@ model:
     max_cav: *max_cav
     compression: 0 # compression rate
     backbone_fix: false
+    num_sweep_frames: *past_k
 
     pillar_vfe:
       use_norm: true
@@ -95,7 +97,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: true
+      resnet: false
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -117,6 +119,34 @@ model:
     #   padding: [1]
     #   kernel_size : [3]
     #   n_blocks: 1
+    rain_model:
+      N: 8
+      d_model: 256
+      d_ff: 1024
+      h: 8
+      num_layers: 1
+      neighbor_range: 2
+      dropout: 0.1
+      max_len: 300
+      input_dim: 256
+      voxel_size: *voxel_size
+      downsample_rate: 1
+      in_channels: 256
+      n_head: 8
+      dropout_rate: 0
+      only_attention: true
+      communication:
+        round: 1
+        thre: 0.10
+        gaussian_smooth:
+          k_size: 5
+          c_sigma: 1.0
+      agg_operator:
+        mode: 'MAX' # MAX or RAIN
+        feature_dim: 256
+      multi_scale: false
+      layer_nums: *layer_nums
+      num_filters: *num_filters
 
     fusion_args:
       voxel_size: *voxel_size
@@ -134,7 +164,7 @@ model:
       agg_operator:
         mode: 'MAX'
         feature_dim: 256
-      multi_scale: false
+      multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 

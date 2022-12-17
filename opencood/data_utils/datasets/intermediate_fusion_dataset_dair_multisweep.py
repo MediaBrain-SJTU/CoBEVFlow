@@ -63,7 +63,7 @@ def id_to_str(id, digits=6):
         id //= 10
     return result
 
-class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.IntermediateFusionDataset):
+class IntermediateFusionDatasetDAIRMultisweep(intermediate_fusion_dataset.IntermediateFusionDataset):
     """
     Written by sizhewei @ 2022/09/28
     This class is for intermediate fusion where each vehicle transmit the

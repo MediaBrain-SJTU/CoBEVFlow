@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Author: Yue Hu <phyllis1sjtu@outlook.com>
+# Author: Yue Hu <phyllis1sjtu@outlook.com>, Sizhe Wei <sizhewei@sjtu.edu.cn>
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 import torch
@@ -32,24 +32,45 @@ class Communication(nn.Module):
         self.gaussian_filter.bias.data.zero_()
 
     def forward(self, batch_confidence_maps, record_len, pairwise_t_matrix):
-        # batch_confidence_maps:[(L1, H, W), (L2, H, W), ...]
-        # pairwise_t_matrix: (B,L,L,2,3)
-        # thre: threshold of objectiveness
-        # a_ji = (1 - q_i)*q_ji
-        B, L, _, _, _ = pairwise_t_matrix.shape
+        """ 
+
+        Parameters:
+        -----------
+        batch_confidence_maps:[(L1xk, 2, H, W), (L2xk, 2, H, W), ..., (L_B x k, 2, H, W)]
+        confidence_maps (without regroup func): (B, 2, H, W)  B
+        pairwise_t_matrix: (B,L,k,2,3)
+
+        Returns:
+        --------
+        batch_communication_maps: list
+            orignal confidence map x mask
+
+        communication_masks: list / torch.Tensor(修改后是 list, 方便下游处理任务)
+            mask, shape:(B, 1, H, W). 0 or 1
+
+        communication_rates: float
+
+        Memos:
+        ------
+        self.thre: threshold of objectiveness
+        a_ji = (1 - q_i)*q_ji
+        """
+        
+        '''
+        B: batch_size
+        L: max cav num
+        k: num of past frames
+        H, W: feature map height and weight
+        '''
+        B, L, k, _, _ = pairwise_t_matrix.shape
         _, _, H, W = batch_confidence_maps[0].shape
         
         communication_masks = []
         communication_rates = []
         batch_communication_maps = []
         for b in range(B):
-            # number of valid agent
-            N = record_len[b]
-            # (N,N,4,4)
-            # t_matrix[i, j]-> from i to j
-            # t_matrix = pairwise_t_matrix[b][:N, :N, :, :]
 
-            ori_communication_maps = batch_confidence_maps[b].sigmoid().max(dim=1)[0].unsqueeze(1) # dim1=2 represents the confidence of two anchors
+            ori_communication_maps = batch_confidence_maps[b].sigmoid().max(dim=1)[0].unsqueeze(1) # dim1=2 represents the confidence of two anchors, (num_cav * k, 1, H, W)
             
             if self.smooth:
                 communication_maps = self.gaussian_filter(ori_communication_maps)
@@ -58,21 +79,15 @@ class Communication(nn.Module):
 
             ones_mask = torch.ones_like(communication_maps).to(communication_maps.device)
             zeros_mask = torch.zeros_like(communication_maps).to(communication_maps.device)
-            communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)# TODO: thre=0.01, 所以这里面mask全1 
+            communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)
 
             communication_rate = communication_mask[0].sum()/(H*W)
 
-            # communication_mask = warp_affine_simple(communication_mask,
-            #                                 t_matrix[0, :, :, :],
-            #                                 (H, W))
-            
-            communication_mask_nodiag = communication_mask.clone() #TODO: question, 这里面把 0, 2, 4, ... 车的mask置1，是为什么呀
-            ones_mask = torch.ones_like(communication_mask).to(communication_mask.device)
-            communication_mask_nodiag[::2] = ones_mask[::2]
+            communication_mask[:k] = ones_mask[:k]
 
-            communication_masks.append(communication_mask_nodiag)
-            communication_rates.append(communication_rate) #TODO: question, 这里面先计算 rate，然后再把 mask 修改了 
-            batch_communication_maps.append(ori_communication_maps*communication_mask_nodiag) # (confidence > thre 的位置以及偶数id的cav 是1，其余是0) * confidence
+            communication_masks.append(communication_mask)
+            communication_rates.append(communication_rate) 
+            batch_communication_maps.append(ori_communication_maps*communication_mask) # (confidence > thre 的位置以及偶数id的cav 是1，其余是0) * confidence
         communication_rates = sum(communication_rates)/B
-        communication_masks = torch.concat(communication_masks, dim=0) # confidence > thre 的位置以及偶数id的cav 是1，其余是0；然后concat到一起
+        # communication_masks = torch.concat(communication_masks, dim=0) # confidence > thre 的位置以及偶数id的cav 是1，其余是0；然后concat到一起
         return batch_communication_maps, communication_masks, communication_rates 

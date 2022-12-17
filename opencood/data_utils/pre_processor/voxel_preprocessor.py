@@ -95,7 +95,7 @@ class VoxelPreprocessor(BasePreprocessor):
         elif isinstance(batch, dict):
             return self.collate_batch_dict(batch)
         else:
-            sys.exit('Batch has too be a list or a dictionarn')
+            sys.exit('Batch has too be a list or a dictionary')
 
     @staticmethod
     def collate_batch_list(batch):

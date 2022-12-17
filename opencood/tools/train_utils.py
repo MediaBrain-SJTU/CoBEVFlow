@@ -178,7 +178,7 @@ def create_loss(hypes):
     return criterion
 
 
-def setup_optimizer(hypes, model):
+def setup_optimizer(hypes, model, is_pre_trained=False):
     """
     Create optimizer corresponding to the yaml file
 
@@ -193,12 +193,18 @@ def setup_optimizer(hypes, model):
     optimizer_method = getattr(optim, method_dict['core_method'], None)
     if not optimizer_method:
         raise ValueError('{} is not supported'.format(method_dict['name']))
+    #####################################################################
+    if is_pre_trained:
+        params = filter(lambda p: p.requires_grad, model.parameters())
+    else:
+        params = model.parameters()
+    ######################################################################
     if 'args' in method_dict:
-        return optimizer_method(model.parameters(),
+        return optimizer_method(params,
                                 lr=method_dict['lr'],
                                 **method_dict['args'])
     else:
-        return optimizer_method(model.parameters(),
+        return optimizer_method(params,
                                 lr=method_dict['lr'])
 
 
@@ -252,6 +258,6 @@ def to_device(inputs, device):
                 or isinstance(inputs, str) or isinstance(inputs, numpy.int64):  
                 # AttributeError: 'numpy.int64' object has no attribute 'to'
                 # sizhewei @ 2022/10/04
-                # 添加类型 numpy.int64 数据集中的 sample_idx 是此类型
+                # 添加类型 numpy.int64 数据集中的 sample_idx 是此类型, numpy.ndarry 数据集中 time_interval 是此类型
             return inputs
         return inputs.to(device)
