@@ -288,8 +288,13 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             debug_times[0] += (time_e - time_s)
 
             time_s = time.time()
-            data[cav_id]['curr']['lidar_np'] = \
-                    pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+            # load lidar file: npy is faster than pcd
+            npy_file = cav_content[timestamp_key]['lidar'].replace("pcd", "npy")
+            if os.path.exists(npy_file):
+                data[cav_id]['curr']['lidar_np'] = np.load(npy_file)
+            else:
+                data[cav_id]['curr']['lidar_np'] = \
+                        pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
             time_e = time.time()
             debug_times[1] += (time_e - time_s)
 
@@ -323,8 +328,13 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 debug_times[0] += (time_e - time_s)
 
                 time_s = time.time()
-                data[cav_id]['past_k'][i]['lidar_np'] = \
-                    pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+                # load lidar file: npy is faster than pcd
+                npy_file = cav_content[timestamp_key]['lidar'].replace("pcd", "npy")
+                if os.path.exists(npy_file):
+                    data[cav_id]['past_k'][i]['lidar_np'] = np.load(npy_file)
+                else:
+                    data[cav_id]['past_k'][i]['lidar_np'] = \
+                            pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
                 time_e = time.time()
                 debug_times[1] += (time_e - time_s)
 
@@ -421,6 +431,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         past_k_time_diffs_stack = []
         past_k_tr_mats = []
         past_k_label_dicts_stack = []
+
+        if self.visualize:
+            projected_lidar_stack = []
         
         self.times.append(time.time())
         
@@ -446,6 +459,10 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 ego_lidar_pose, 
                 idx
             )
+
+            if self.visualize:
+                projected_lidar_stack.append(
+                    selected_cav_processed['projected_lidar'])
             
             # single view feature
             curr_feature_stack.append(selected_cav_processed['curr_feature'])
@@ -548,6 +565,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
+        if self.visualize:
+            processed_data_dict['ego'].update({'origin_lidar':
+                np.vstack(projected_lidar_stack)})
 
         return processed_data_dict
 
@@ -605,6 +625,19 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         lidar_np = selected_cav_base['curr']['lidar_np']
         lidar_np = shuffle_points(lidar_np)
         lidar_np = mask_ego_points(lidar_np) # remove points that hit itself
+
+        if self.visualize:
+            # trans matrix
+            transformation_matrix = \
+                x1_to_x2(selected_cav_base['curr']['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray
+            projected_lidar = \
+                box_utils.project_points_by_matrix_torch(lidar_np[:, :3], transformation_matrix)
+            selected_cav_processed.update(
+                {
+                    'projected_lidar': projected_lidar
+                }
+            )
+
         lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range'])
         curr_feature = self.pre_processor.preprocess(lidar_np)
         
@@ -853,6 +886,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
         # for debug use:
         time_consume = np.zeros_like(batch[0]['ego']['times'])
+
+        if self.visualize:
+            origin_lidar = []
         
         for i in range(len(batch)):
             ego_dict = batch[i]['ego']
@@ -876,6 +912,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             # past_k_label_list.append(ego_dict['past_k_label_dicts'])
 
             time_consume += ego_dict['times']
+            if self.visualize:
+                origin_lidar.append(ego_dict['origin_lidar'])
         
         
         # single_object_label = self.post_processor.collate_batch(single_object_label)
@@ -941,6 +979,12 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                                    'past_k_time_interval': past_k_time_interval,
                                    'times': time_consume})
 
+        if self.visualize:
+            origin_lidar = \
+                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
+            origin_lidar = torch.from_numpy(origin_lidar)
+            output_dict['ego'].update({'origin_lidar': origin_lidar})
+            
         # if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
         #     (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item():
         #     return None

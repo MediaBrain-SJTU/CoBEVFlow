@@ -1,8 +1,8 @@
 name: opv2v_npj_raindrop_attn
 # root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
-root_dir: "/DB/data/sizhewei/OPV2Vpart/train/"
-validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
-test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
+root_dir: "/DB/public/OPV2V_w_npy/train/"
+validate_dir: "/DB/public/OPV2V_w_npy/validate"
+test_dir: "/DB/public/OPV2V_w_npy/test"
 
 noise_setting:
   add_noise: False
@@ -17,13 +17,13 @@ comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 2
-  epoches: 30
+  batch_size: &batch_size 4
+  epoches: 20
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
 
-num_sweep_frames: &past_k 2
+num_sweep_frames: &past_k 1
 time_delay: 0
 
 fusion:
@@ -105,12 +105,12 @@ model:
       num_upsample_filter: [128, 128, 128]
       compression: 0
       voxel_size: *voxel_size
-    # shrink_header:
-    #   kernal_size: [ 3 ]
-    #   stride: [ 1 ]
-    #   padding: [ 1 ]
-    #   dim: [ 256 ]
-    #   input_dim: 384 # 128 * 3
+    shrink_header:
+      kernal_size: [ 3 ]
+      stride: [ 1 ]
+      padding: [ 1 ]
+      dim: [ 256 ]
+      input_dim: 384 # 128 * 3
     
     # dcn:
     #   in_channels: [384]

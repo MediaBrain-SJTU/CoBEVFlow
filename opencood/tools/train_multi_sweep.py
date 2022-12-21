@@ -40,7 +40,7 @@ def main():
     opt = train_parser()
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
 
-    print('Dataset Building')
+    print('### Dataset Building ... ###')
     start_time = time.time()
     opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)
     opencood_validate_dataset = build_dataset(hypes,
@@ -49,9 +49,9 @@ def main():
 
     train_loader = DataLoader(opencood_train_dataset,
                               batch_size=hypes['train_params']['batch_size'],
-                              num_workers=1,
+                              num_workers=8,
                               collate_fn=opencood_train_dataset.collate_batch_train,
-                              shuffle=False,
+                              shuffle=True,
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
@@ -63,7 +63,7 @@ def main():
                             drop_last=True)
     end_time = time.time()
     print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
-
+    start_time = time.time()
     # for debug use:
     #############################################################################
     # init_epoch = 0
@@ -74,7 +74,7 @@ def main():
     #             continue
     #############################################################################
     
-    print('Creating Model')
+    print('### Creating Model ... ###')
     model = train_utils.create_model(hypes)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("device: ", device)
@@ -83,11 +83,11 @@ def main():
     # load pre-train model for single view
     is_pre_trained = True
     if is_pre_trained:
-        pretrain_path = "/GPFS/rhome/yifanlu/OpenCOOD/opencood/logs/OPV2V_lidar_single"
-        initial_epoch = 15
+        pretrain_path = "/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25"
+        initial_epoch = 24
         pre_train_model = torch.load(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch))
         model.load_state_dict(pre_train_model, strict=False)
-
+        print("### Pre-trained point pillar {} loaded successfully! ###".format(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch)))
         for name, value in model.named_parameters():
             if name in pre_train_model:
                 value.requires_grad = False
@@ -125,7 +125,7 @@ def main():
     writer = SummaryWriter(saved_path)
 
     start_time = time.time()
-    print('Training start')
+    print('### Training start! ###')
     epoches = hypes['train_params']['epoches']
     proj_first = hypes['fusion']['args']['proj_first']
     # used to help schedule learning rate
@@ -169,39 +169,39 @@ def main():
         for param_group in optimizer.param_groups:
             print('learning rate %f' % param_group["lr"])
         
-        start_time = time.time()
-        times = []
+        # start_time = time.time()
+        # times = []
         for i, batch_data in enumerate(train_loader):
-            if isinstance(times, list):
-                times = torch.zeros_like(batch_data['ego']['times'])
-            times += batch_data['ego']['times']
+            # if isinstance(times, list):
+                # times = torch.zeros_like(batch_data['ego']['times'])
+            # times += batch_data['ego']['times']
 
-            end_time = time.time()
-            time_loaddata += (end_time - start_time)
+            # end_time = time.time()
+            # time_loaddata += (end_time - start_time)
 
             # if i%10==0:
             #     end_time = time.time()
             #     print("=== 10 Batches finished, Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
             #     start_time = time.time()
             
-            if i == 20:
-                print("================END=================")
-                print("=== data loading time consumed: %.1f minutes. ===" % (time_loaddata/60))
-                print("=== data todevice time consumed: %.1f minutes. ===" % (time_todevice/60))
-                print("=== data training time consumed: %.1f minutes. ===" % (time_training/60))
-                print("=== data loss and bp time consumed: %.1f minutes. ===" % (time_lossandbp/60))
+            # if i == 20:
+            #     print("================END=================")
+            #     print("=== data loading time consumed: %.1f minutes. ===" % (time_loaddata/60))
+            #     print("=== data todevice time consumed: %.1f minutes. ===" % (time_todevice/60))
+            #     print("=== data training time consumed: %.1f minutes. ===" % (time_training/60))
+            #     print("=== data loss and bp time consumed: %.1f minutes. ===" % (time_lossandbp/60))
 
-                times /= 60
-                print(times)
+            #     times /= 60
+            #     print(times)
 
-                times[:-3] /= times[:-3].sum()
-                print(times[:-3])
-                return 0
+            #     times[:-3] /= times[:-3].sum()
+            #     print(times[:-3])
+            #     return 0
 
             if batch_data is None:
                 continue
 
-            start_time = time.time()
+            # start_time = time.time()
             # the model will be evaluation mode during validation
             model.train()
             model.zero_grad()
@@ -214,16 +214,16 @@ def main():
             # becomes a list, which containing all data from other cavs
             # as well
 
-            end_time = time.time()
-            time_todevice += (end_time - start_time)
-            start_time = time.time()
+            # end_time = time.time()
+            # time_todevice += (end_time - start_time)
+            # start_time = time.time()
 
             batch_data['ego']['epoch'] = epoch
             ouput_dict = model(batch_data['ego'])
 
-            end_time = time.time()
-            time_training += (end_time - start_time)
-            start_time = time.time()
+            # end_time = time.time()
+            # time_training += (end_time - start_time)
+            # start_time = time.time()
 
             if kd_flag:
                 teacher_output_dict = teacher_model(batch_data['ego'])
@@ -239,15 +239,16 @@ def main():
             final_loss.backward()
             optimizer.step()
 
-            end_time = time.time()
-            time_lossandbp += (end_time - start_time)
-            start_time = time.time()
+            # end_time = time.time()
+            # time_lossandbp += (end_time - start_time)
+            # start_time = time.time()
 
             torch.cuda.empty_cache()
 
         if epoch % hypes['train_params']['eval_freq'] == 0:
             valid_ave_loss = []
-
+            end_time = time.time()
+            print('### %d th epoch trained, start validation! Time consumed %.2f ###' % (epoch, (end_time - start_time)/60))
             with torch.no_grad():
                 for i, batch_data in enumerate(val_loader):
                     if batch_data is None:
@@ -283,7 +284,7 @@ def main():
     
     if run_test:
         fusion_method = opt.fusion_method
-        cmd = f"python opencood/tools/inference.py --model_dir {saved_path} --fusion_method {fusion_method}"
+        cmd = f"python opencood/tools/inference_multi_sweep.py --model_dir {saved_path} --fusion_method {fusion_method}"
         print(f"Running command: {cmd}")
         os.system(cmd)
 
