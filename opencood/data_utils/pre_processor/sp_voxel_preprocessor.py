@@ -22,7 +22,7 @@ class SpVoxelPreprocessor(BasePreprocessor):
         try:
             from spconv.utils import VoxelGeneratorV2 as VoxelGenerator
         except:
-            from spconv.utils import VoxelGenerator      
+            from spconv.utils import VoxelGenerator   
 
         self.lidar_range = self.params['cav_lidar_range']
         self.voxel_size = self.params['args']['voxel_size']

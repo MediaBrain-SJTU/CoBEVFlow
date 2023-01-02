@@ -11,14 +11,14 @@ import math
 from torch.autograd import Variable
 import torch.nn.functional as F
 import random
-from dgl.nn.pytorch.factory import KNNGraph
-import dgl
+# from dgl.nn.pytorch.factory import KNNGraph
+# import dgl
 import numpy as np
 import os
 
 import torch.nn.functional as F
 from turtle import update
-
+# import ipdb
 from opencood.models.sub_modules.torch_transformation_utils import warp_affine_simple
 from opencood.models.comm_modules.where2comm_multisweep import Communication
 
@@ -26,19 +26,15 @@ def clones(module, N):
     "Produce N identical layers."
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
-def get_single_neighbors(h,w,neighbor_range):
-    row = torch.arange(w-neighbor_range,w+neighbor_range+1).repeat(neighbor_range*2+1)
-    col = (torch.arange(h-neighbor_range, h+neighbor_range+1)*w).repeat_interleave(neighbor_range*2+1)
 
-    return row+col
 
 class PositionalEncoding_spatial(nn.Module):
     "Implement the PE function."
 
-    def __init__(self, d_model_out, dropout, max_len=300,mode='cat'):
+    def __init__(self, d_model_feature, d_model_hidden, dropout, max_len=300,mode='cat'):
         super(PositionalEncoding_spatial, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
-        d_model = int(d_model_out/2)
+        d_model = int(d_model_hidden/2)
         # Compute the positional encodings once in log space.
         pe = torch.zeros((max_len, d_model))
         position = torch.arange(0, max_len).unsqueeze(1)
@@ -54,19 +50,20 @@ class PositionalEncoding_spatial(nn.Module):
 
         self.register_buffer('pe', pe)
 
-        self.linear = nn.Linear(2*d_model,d_model)
+        self.linear = nn.Linear(d_model_feature + d_model_hidden, d_model_feature)
         self.mode = mode
 
     def forward(self, x):
-
         if self.mode == 'cat':
-            x = self.linear(torch.cat((x,Variable(pe[:,:x.shape[1],:x.shape[2]],require_grad=False)),dim=-1))
+            tmp = Variable(self.pe[:,:x.shape[1],:x.shape[2]],requires_grad=False)
+            tmp = tmp.repeat(x.shape[0], 1, 1, 1)
+            x = self.linear(torch.cat((x, tmp),dim=-1))
 
         elif self.mode == 'init':
-            x = Variable(pe[:,:x.shape[1],:x.shape[2]],requires_grad=False)
+            x = Variable(self.pe[:,:x.shape[1],:x.shape[2]],requires_grad=False)
 
         else:
-            x = x + Variable(pe[:,:x.shape[1],:x.shape[2]],requires_grad=False)
+            x = x + Variable(self.pe[:,:x.shape[1],:x.shape[2]],requires_grad=False)
 
         return self.dropout(x)
 
@@ -103,11 +100,11 @@ class PositionalEncoding_sensor_dist(nn.Module):
 
 class PositionalEncoding_irregular_time(nn.Module):
 
-    def __init__(self, d_model, dropout):
+    def __init__(self, d_model_feature, d_model_hidden, dropout):
         super(PositionalEncoding_irregular_time, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
-        self.d_model = d_model
-        self.linear = nn.Linear(2*d_model,d_model)
+        self.d_model = d_model_hidden
+        self.linear = nn.Linear(d_model_feature+d_model_hidden, d_model_feature)
         self.mode = 'cat'
 
     def forward(self, x, time):#x.shape=[batch,height,width,feature],time.shape=[batch]
@@ -123,7 +120,9 @@ class PositionalEncoding_irregular_time(nn.Module):
         pe = pe.unsqueeze(1).unsqueeze(1)
 
         if self.mode == 'cat':
-            x = self.linear(torch.cat((x,Variable(pe,require_grad=False)),dim=-1))
+            tmp = Variable(pe, requires_grad=False)
+            tmp = tmp.repeat(1, x.shape[1], x.shape[2], 1)
+            x = self.linear(torch.cat((x, tmp),dim=-1))
 
         else:
             x = x + Variable(pe,requires_grad=False)
@@ -137,12 +136,17 @@ def attention(query, key, value, mask=None, dropout=None):
     scores = torch.matmul(query, key.transpose(-2, -1)) \
              / math.sqrt(d_k)
     
-
-    mask = mask.transpose(1,2).to(query.device)
+    # ipdb.set_trace()
+    
     # print('score',scores.shape,'mask',mask.shape)
 
     if mask is not None:
+        # mask = mask.transpose(1,2).to(query.device)
+        mask = mask.to(query.device)
         scores = scores.masked_fill(mask == 0, -1e10) 
+
+    p_attn = F.softmax(scores, dim = -1)
+    if dropout is not None:
         p_attn = dropout(p_attn)
 
     return torch.matmul(p_attn, value), p_attn
@@ -209,25 +213,25 @@ class MultiHeadedAttention_spatial(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
 
-    def forward(self, query, spatial_neighbors , mask=None):
+    def forward(self, query_, spatial_neighbors , mask=None):
         "Implements Figure 2"
         if mask is not None:
             # Same mask applied to all h heads.
             mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
+        nbatches = query_.size(0)
 
         # 1) Do all the linear projections in batch from d_model => h x d_k 
 
+        spatial_neighbors = spatial_neighbors.to(query_.device)
+        query = self.linear_q(query_).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
+        key_ = self.linear_k(query_).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
+        value_ = self.linear_v(query_).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
+        # ipdb.set_trace()
+        key = torch.index_select(key_,dim=0,index=spatial_neighbors.to(torch.int32).reshape(-1))
+        key = key.reshape(nbatches,spatial_neighbors.shape[1],self.h,self.d_k).transpose(1,2)
 
-        query = self.linear_q(query).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
-        key_ = self.linear_k(query).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
-        value_ = self.linear_v(query).view(nbatches,-1,self.h,self.d_k).transpose(1,2)
-        
-        key = torch.index_select(key_,dim=0,index=spatial_neighbors.reshape(-1))
-        key = key.squeeze(1).reshape(nbatches,spatial_neighbors.shape[1],self.h,self.d_k)
-
-        value = torch.index_select(value_,dim=0,index=spatial_neighbors.reshape(-1))
-        value = value.squeeze(1).reshape(nbatches,spatial_neighbors.shape[1],self.h,self.d_k)
+        value = torch.index_select(value_,dim=0,index=spatial_neighbors.to(torch.int32).reshape(-1))
+        value = value.reshape(nbatches,spatial_neighbors.shape[1],self.h,self.d_k).transpose(1,2)
 
         # 2) Apply attention on all the projected vectors in batch. 
         x, self.attn = attention(query, key, value, mask=mask,
@@ -240,6 +244,70 @@ class MultiHeadedAttention_spatial(nn.Module):
         return self.linear_out(x)
 
 
+class LayerNorm(nn.Module):
+    def __init__(self, features, eps=1e-6):
+        super(LayerNorm, self).__init__()
+        self.a_2 = nn.Parameter(torch.ones(features))
+        self.b_2 = nn.Parameter(torch.zeros(features))
+        self.eps = eps
+ 
+    def forward(self, x):
+        "Norm"
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
+
+class SublayerConnection(nn.Module):
+    def __init__(self, size, dropout):
+        super(SublayerConnection, self).__init__()
+        self.norm = LayerNorm(size)
+        self.dropout = nn.Dropout(dropout)
+ 
+    def forward(self, x, sublayer):
+        # print('sub',x.shape,self.dropout(sublayer(self.norm(x))).shape)
+        return x + self.dropout(sublayer(self.norm(x))) #残差连接
+
+class PositionwiseFeedForward(nn.Module):
+    "Implements FFN equation."
+    def __init__(self, d_model,d_out, d_ff, dropout=0.1):
+        super(PositionwiseFeedForward, self).__init__()
+        self.w_1 = nn.Linear(d_model, d_ff)
+        self.w_2 = nn.Linear(d_ff, d_out)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        return self.w_2(self.dropout(F.relu(self.w_1(x))))
+
+class EncoderLayer_temporal(nn.Module):
+    "Encoder is made up of self-attn and feed forward (defined below)"
+    def __init__(self, size, self_attn, feed_forward, dropout):
+        super(EncoderLayer_temporal, self).__init__()
+        self.self_attn = self_attn #sublayer 1 
+        self.feed_forward = feed_forward #sublayer 2 
+        self.sublayer = clones(SublayerConnection(size, dropout), 2) #拷贝两个SublayerConnection，一个为了attention，一个是独自作为简单的神经网络
+        self.size = size
+
+    def forward(self, q, k, v, mask):
+        "Follow Figure 1 (left) for connections."
+        # print('x',x.shape,'attn',self.self_attn(x,x,x,mask).shape)
+        x = self.sublayer[0](q, lambda q: self.self_attn(q, k, v, mask)) #attention层 对应层1
+        return self.sublayer[1](x, self.feed_forward) # 对应 层2
+
+class EncoderLayer_spatial(nn.Module):
+    "Encoder is made up of self-attn and feed forward (defined below)"
+    def __init__(self, size, self_attn, feed_forward, dropout):
+        super(EncoderLayer_spatial, self).__init__()
+        self.self_attn = self_attn #sublayer 1 
+        self.feed_forward = feed_forward #sublayer 2 
+        self.sublayer = clones(SublayerConnection(size, dropout), 2) #拷贝两个SublayerConnection，一个为了attention，一个是独自作为简单的神经网络
+        self.size = size
+
+    def forward(self, x, neighbors):
+        "Follow Figure 1 (left) for connections."
+        # print('x',x.shape,'attn',self.self_attn(x,x,x,mask).shape)
+        x = self.sublayer[0](x, lambda x: self.self_attn(x, neighbors)) #attention层 对应层1
+        return self.sublayer[1](x, self.feed_forward) # 对应 层2
+
 class AttentionFusion(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_heads, num_layers, neighbor_range, height, width, dropout, max_len=300):
         super(AttentionFusion, self).__init__()
@@ -251,20 +319,33 @@ class AttentionFusion(nn.Module):
         self.height = height
         self.width = width
 
-        self.spatial_query = PositionalEncoding_spatial(hidden_dim, dropout, max_len, mode='init')
+        self.spatial_query = PositionalEncoding_spatial(self.input_dim, hidden_dim, dropout, max_len, mode='init')
 
-        self.spatial_encoding = PositionalEncoding_spatial(hidden_dim, dropout, max_len)
+        self.spatial_encoding = PositionalEncoding_spatial(self.input_dim, hidden_dim, dropout, max_len)
 
-        self.time_encoding = PositionalEncoding_irregular_time(hidden_dim, dropout)
+        self.time_encoding = PositionalEncoding_irregular_time(self.input_dim, hidden_dim, dropout)
 
         self.sensor_dist_encoding = PositionalEncoding_sensor_dist(hidden_dim, dropout)
 
-        self.layers_temporal = clones(MultiHeadedAttention(self.num_heads, self.input_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout),num_layers)
-        self.temporal_aggregator = MultiHeadedAttention(self.num_heads, self.input_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout)
-        self.layers_spatial = clones(MultiHeadedAttention_spatial(self.num_heads, self.input_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout),num_layers)
+        c = copy.deepcopy
+        temporal_attn = MultiHeadedAttention(self.num_heads, self.input_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout)
+        spatial_attn = MultiHeadedAttention_spatial(self.num_heads, self.input_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout)
+        ff = PositionwiseFeedForward(self.input_dim, self.input_dim, self.hidden_dim, dropout)
+
+
+        self.layers_temporal = clones(EncoderLayer_temporal(self.input_dim, c(temporal_attn), c(ff), dropout),num_layers)
+        # self.temporal_aggregator = MultiHeadedAttention(self.num_heads, hidden_dim, self.input_dim, self.input_dim, self.hidden_dim, dropout)
+        self.layers_spatial = clones(EncoderLayer_spatial(self.input_dim, c(spatial_attn), c(ff), dropout),num_layers)
         
         self.generate_spatial_neighbors(self.height, self.width, self.neighbor_range)
+       
         print("================Rain attention Init================")
+
+    def get_single_neighbors(self,h,w,neighbor_range):
+        row = torch.arange(w-neighbor_range,w+neighbor_range+1).repeat(neighbor_range*2+1)
+        col = (torch.arange(h-neighbor_range, h+neighbor_range+1)*self.width).repeat_interleave(neighbor_range*2+1)
+
+        return row+col
 
     def generate_spatial_neighbors(self, height, width, neighbor_range):
         self.spatial_neighbors = torch.zeros(height*width,(neighbor_range*2+1)**2)
@@ -273,30 +354,30 @@ class AttentionFusion(nn.Module):
             for w in range(width):
                 if h < neighbor_range :
                     if w < neighbor_range:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(neighbor_range,neighbor_range,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(neighbor_range,neighbor_range,neighbor_range)
                     elif w > width-neighbor_range-1:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(neighbor_range,width-neighbor_range-1,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(neighbor_range,width-neighbor_range-1,neighbor_range)
                     else:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(neighbor_range,w,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(neighbor_range,w,neighbor_range)
 
                 elif h > height-neighbor_range-1:
                     if w < neighbor_range:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(height-neighbor_range-1,neighbor_range,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(height-neighbor_range-1,neighbor_range,neighbor_range)
                     elif w > width-neighbor_range-1:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(height-neighbor_range-1,width-neighbor_range-1,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(height-neighbor_range-1,width-neighbor_range-1,neighbor_range)
                     else:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(height-neighbor_range-1,w,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(height-neighbor_range-1,w,neighbor_range)
 
                 else:
                     if w < neighbor_range:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(h,neighbor_range,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(h,neighbor_range,neighbor_range)
                     elif w > width-neighbor_range-1:
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(h,width-neighbor_range-1,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(h,width-neighbor_range-1,neighbor_range)
                     else: 
-                        self.spatial_neighbors[h*height+w] = get_single_neighbors(h,w,neighbor_range)
+                        self.spatial_neighbors[h*width+w] = self.get_single_neighbors(h,w,neighbor_range)
 
 
-    def forward(self, feartures, sensor_dist, time_stamps, valid_mask):
+    def forward(self, features, sensor_dist, time_stamps, valid_mask):
         """
         Parameters:
         -----------
@@ -321,45 +402,68 @@ class AttentionFusion(nn.Module):
         output_feature: torch.Tensor, shape (C, H, W)
             ego cav's fused feature at current frame.
         """
-        batch_all,feature_dim,height,width = feartures.shape
-        features = features.transpose(0,2,3,1)
-        
-        final_feature = self.spatial_query(None)# final_query.shape = [H,W,F]
+        # ipdb.set_trace()
 
+        batch_all,feature_dim,height,width = features.shape
+        features = features.permute(0,2,3,1)
+        #######################################     最后输出要用到的地块query
+        final_feature = self.spatial_query(torch.zeros((1,height, width, feature_dim)))# final_query.shape = [H,W,F]
+        #######################################
+
+        ##########################################  三种encoding
         features = self.spatial_encoding(features)# features.shape = [batch_all,height,width,feature_dim]
         if sensor_dist!=-1:
             features = self.sensor_dist_encoding(features,sensor_dist)
         features = self.time_encoding(features,time_stamps)
+        ###########################################
 
-        valid_mask = valid_mask.reshape(batch_all,height*width)# valid_mask.shape = [batch_all,height*width]
+        ################################################### 找到最大的有效长度 max_len
+        valid_mask = valid_mask.squeeze(1).reshape(batch_all,height*width)# valid_mask.shape = [batch_all,height*width]
         valid_mask_sum = valid_mask.sum(0)#valid_mask_sum.shape = [h*w]
-        max_len = valid_mask_sum[0]
+        max_len = torch.max(valid_mask_sum)
 
-        valid_idx = torch.arange(0,batch_all).unsqueeze(-1).repeat(1,height*width)# valid_idx.shape = [batch_all,height*width]
+        ###################################################
 
-        valid_idx = torch.where(valid_mask==1,valid_idx,1e10)# valid_idx.shape = [batch_all,height*width]
 
-        valid_idx = torch.sort(valid_idx,dim=0)[:max_len].unsqueeze(-1).repeat(1,1,feature_dim)#valid_idx.shape = [max_len,height*width,feature_dim]
+        ################################################### 得到有效位置的最终索引 valid_idx
+        valid_idx = torch.arange(0,batch_all).unsqueeze(-1).repeat(1,height*width).to(valid_mask.device)# valid_idx.shape = [batch_all,height*width]
 
-        valid_idx = torch.where(valid_idx==1e10,0,valid_idx)
+        valid_idx = torch.where(valid_mask==1, valid_idx.to(torch.double), 1e10)# valid_idx.shape = [batch_all,height*width]
 
-        temporal_neighbors_set = feartures.reshape(batch_all,height*width,feature_dim).gather(valid_idx,dim=1)#temporal_neighbors_set.shape = [max_len,height*width,feature_dim]
+        valid_idx_ = torch.sort(valid_idx,dim=0)[0][:int(max_len)].unsqueeze(-1).repeat(1,1,feature_dim)#valid_idx.shape = [max_len,height*width,feature_dim]
 
-        temporal_attention_mask = torch.zeros(height*width,1,max_len)
+        valid_idx = torch.where(valid_idx_==1e10, 0., valid_idx_)
+        ###################################################
+        temporal_neighbors_set = features.reshape(batch_all,height*width,feature_dim).gather(0, valid_idx.to(torch.int64))#temporal_neighbors_set.shape = [max_len,height*width,feature_dim]
+        temporal_neighbors_set = temporal_neighbors_set.masked_fill(valid_idx_==1e10,-1e10)
+        #valid_idx [2,25200,256] 
+        # ipdb.set_trace()
+        # temporal_neighbors_set = features.reshape(batch_all,height*width,feature_dim)[:2]
+        ###################################################分别为self attn和aggregator生成mask 
+        temporal_attention_mask = torch.zeros((height*width,1,int(max_len)))
+        temporal_self_attention_mask = torch.zeros((height*width,int(max_len),int(max_len)))
         for i in range(height*width):
-            temporal_attention_mask[i,0,:valid_mask_sum[i]] = 1
+            temporal_attention_mask[i,0,:int(valid_mask_sum[i])] = 1
+            temporal_self_attention_mask[i,:int(valid_mask_sum[i]),:int(valid_mask_sum[i])] = 1
+        ###################################################
 
-        temporal_neighbors_set = temporal_neighbors_set.transpose(1,0,2)
-
-        for l in self.num_layers:
-            temporal_neighbors_set = self.layers_temporal[l](temporal_neighbors_set,temporal_neighbors_set,temporal_neighbors_set,temporal_attention_mask)#shape[h*w,1,feature]
-
-        final_feature = self.temporal_aggregator(final_feature,temporal_neighbors_set,temporal_neighbors_set,temporal_attention_mask)#shape[h*w,1,feature]
-
-        for l in self.num_layers:
+        temporal_neighbors_set = temporal_neighbors_set.permute(1,0,2)
+        # ipdb.set_trace()
+        for l in range(self.num_layers):
+            temporal_neighbors_set = self.layers_temporal[l](temporal_neighbors_set,temporal_neighbors_set,temporal_neighbors_set,temporal_self_attention_mask)#shape[h*w,1,feature]
+        # final_feature = final_feature.permute(1,2,0,3)
+        # final_feature = final_feature.reshape(height*width,-1,feature_dim)
+        # final_feature = self.temporal_aggregator(final_feature,temporal_neighbors_set,temporal_neighbors_set,temporal_attention_mask)#shape[h*w,1,feature]
+        # ipdb.set_trace()
+        valid_idx_ = valid_idx_.permute(1,0,2)
+        temporal_neighbors_set = temporal_neighbors_set.masked_fill(valid_idx_==1e10,-1e10)
+        final_feature = torch.max(temporal_neighbors_set,dim=1)[0]
+        final_feature = final_feature.unsqueeze(1)
+        # final_feature = final_feature.reshape(height,width,feature_dim).permute(2,0,1)
+        # final_feature = final_feature.unsqueeze(1)
+        for l in range(self.num_layers):
             final_feature = self.layers_spatial[l](final_feature,self.spatial_neighbors)#shape[h*w,1,feature]
-
-            
+        final_feature = final_feature.squeeze(1).reshape(height,width,feature_dim).permute(2,0,1)
 
         return final_feature
 

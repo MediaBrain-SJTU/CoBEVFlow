@@ -17,13 +17,13 @@ comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 4
+  batch_size: &batch_size 1
   epoches: 20
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
 
-num_sweep_frames: &past_k 1
+num_sweep_frames: &past_k 2
 time_delay: 0
 
 fusion:
@@ -122,7 +122,7 @@ model:
     rain_model:
       N: 8
       d_model: 256
-      d_ff: 1024
+      d_ff: 256
       h: 8
       num_layers: 1
       neighbor_range: 2
@@ -142,7 +142,7 @@ model:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
-        mode: 'MAX' # MAX or RAIN
+        mode: 'RAIN' # MAX or RAIN
         feature_dim: 256
       multi_scale: false
       layer_nums: *layer_nums

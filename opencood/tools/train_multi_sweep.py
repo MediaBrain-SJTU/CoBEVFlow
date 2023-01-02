@@ -51,7 +51,7 @@ def main():
                               batch_size=hypes['train_params']['batch_size'],
                               num_workers=8,
                               collate_fn=opencood_train_dataset.collate_batch_train,
-                              shuffle=True,
+                              shuffle=False,
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
