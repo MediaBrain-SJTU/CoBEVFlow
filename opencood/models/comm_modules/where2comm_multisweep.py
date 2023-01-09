@@ -12,6 +12,9 @@ class Communication(nn.Module):
         
         self.smooth = False
         self.thre = args['thre']
+        self.num_blocks_thres = 1
+        if 'num_blocks_thres' in args:
+            self.num_blocks_thres = args['num_blocks_thres']
         if 'gaussian_smooth' in args:
             # Gaussian Smooth
             self.smooth = True
@@ -68,6 +71,8 @@ class Communication(nn.Module):
         communication_masks = []
         communication_rates = []
         batch_communication_maps = []
+        all_blocks = H*W
+        num_valid_thres = int(all_blocks * self.num_blocks_thres)
         for b in range(B):
 
             ori_communication_maps = batch_confidence_maps[b].sigmoid().max(dim=1)[0].unsqueeze(1) # dim1=2 represents the confidence of two anchors, (num_cav * k, 1, H, W)
@@ -77,13 +82,30 @@ class Communication(nn.Module):
             else:
                 communication_maps = ori_communication_maps
 
-            ones_mask = torch.ones_like(communication_maps).to(communication_maps.device)
-            zeros_mask = torch.zeros_like(communication_maps).to(communication_maps.device)
-            communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)
+            if self.num_blocks_thres<1 :
+                curr_batch = communication_maps.shape[0] # num_cav * k
+                communication_mask = (communication_maps>self.thre).to(torch.int)
+                valid_nums = torch.sum(communication_mask, dim=(-1, -2, -3))
+
+                final_comm_mask = torch.zeros_like(communication_mask)
+                for i in range(curr_batch):
+                    if valid_nums[i] > num_valid_thres :
+                        # 选择 comm_maps[i] 里面 top num_valid 的位置
+                        tmp = communication_maps[i].reshape((1, -1))
+                        _, idx = torch.topk(tmp, num_valid_thres)
+                        # print(idx)
+                        curr_mask = torch.zeros_like(tmp)
+                        curr_mask[0, idx[0]] = 1
+                        final_comm_mask[i] = curr_mask.reshape((1, H, W))
+                    else:
+                        final_comm_mask[i] = communication_mask[i]
+                communication_mask = final_comm_mask
+            else:
+                ones_mask = torch.ones_like(communication_maps).to(communication_maps.device)
+                zeros_mask = torch.zeros_like(communication_maps).to(communication_maps.device)
+                communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)
 
             communication_rate = communication_mask[0].sum()/(H*W)
-
-            communication_mask[:k] = ones_mask[:k]
 
             communication_masks.append(communication_mask)
             communication_rates.append(communication_rate) 

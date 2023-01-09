@@ -42,7 +42,7 @@ preprocess:
     max_voxel_train: 32000
     max_voxel_test: 70000
   # lidar range for each individual cav. Format: xyzxyz minmax
-  cav_lidar_range: &cav_lidar [-100.8, -40, -3, 100.8, 40, 1]
+  cav_lidar_range: &cav_lidar [-140.8, -40, -3, 140.8, 40, 1]
 
 data_augment:
   - NAME: random_world_flip
@@ -103,12 +103,12 @@ model:
       num_upsample_filter: [128, 128, 128]
       compression: 0
       voxel_size: *voxel_size
-    # shrink_header:
-    #   kernal_size: [ 3 ]
-    #   stride: [ 1 ]
-    #   padding: [ 1 ]
-    #   dim: [ 256 ]
-    #   input_dim: 384 # 128 * 3
+    shrink_header:
+      kernal_size: [ 3 ]
+      stride: [ 1 ]
+      padding: [ 1 ]
+      dim: [ 256 ]
+      input_dim: 384 # 128 * 3
     
     # dcn:
     #   in_channels: [384]
@@ -134,7 +134,7 @@ model:
       agg_operator:
         mode: 'MAX'
         feature_dim: 256
-      multi_scale: false
+      multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 

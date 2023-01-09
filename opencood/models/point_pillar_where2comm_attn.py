@@ -28,7 +28,7 @@ class PointPillarWhere2commAttn(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
-        if 'resnet' in args['base_bev_backbone']:
+        if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
             self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
         else:
             self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
@@ -59,16 +59,21 @@ class PointPillarWhere2commAttn(nn.Module):
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
-        # self.fusion_net = TransformerFusion(args['fusion_args'])
         self.fusion_net = Where2comm(args['fusion_args'])
-        # TODO: rain drop attentioin
         self.rain_fusion = raindrop_fuse(args['rain_model'])
         self.multi_scale = args['fusion_args']['multi_scale']
+        
+        if self.shrink_flag:
+            self.cls_head = nn.Conv2d(128 * 2, args['anchor_number'],
+                                    kernel_size=1)
+            self.reg_head = nn.Conv2d(128 * 2, 7 * args['anchor_number'],
+                                    kernel_size=1)
+        else:
+            self.cls_head = nn.Conv2d(128 * 3, args['anchor_number'],
+                                    kernel_size=1)
+            self.reg_head = nn.Conv2d(128 * 3, 7 * args['anchor_number'],
+                                    kernel_size=1)
 
-        self.cls_head = nn.Conv2d(128 * 2, args['anchor_number'],
-                                  kernel_size=1)
-        self.reg_head = nn.Conv2d(128 * 2, 7 * args['anchor_number'],
-                                  kernel_size=1)
         if args['backbone_fix']:
             self.backbone_fix()
 
@@ -138,12 +143,23 @@ class PointPillarWhere2commAttn(nn.Module):
         rm_single = self.reg_head(spatial_features_2d)
 
         # rain attention:
-        fused_feature, communication_rates, result_dict = self.rain_fusion(spatial_features_2d,
+        if self.multi_scale:
+            fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                                                psm_single,
+                                                record_len,
+                                                pairwise_t_matrix, 
+                                                record_frames,
+                                                self.backbone,
+                                                [self.shrink_conv, self.cls_head, self.reg_head])
+            # downsample feature to reduce memory
+            if self.shrink_flag:
+                fused_feature = self.shrink_conv(fused_feature)
+        else:
+            fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
                                             psm_single,
                                             record_len,
-                                            pairwise_t_matrix, 
-                                            record_frames,
-                                            self.backbone)
+                                            pairwise_t_matrix,
+                                            record_frames)
 
         # # print('spatial_features_2d: ', spatial_features_2d.shape)
         # if self.multi_scale:

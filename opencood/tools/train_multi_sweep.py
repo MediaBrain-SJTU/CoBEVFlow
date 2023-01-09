@@ -51,7 +51,7 @@ def main():
                               batch_size=hypes['train_params']['batch_size'],
                               num_workers=8,
                               collate_fn=opencood_train_dataset.collate_batch_train,
-                              shuffle=False,
+                              shuffle=True,
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
@@ -81,16 +81,20 @@ def main():
 
     #############################################################################
     # load pre-train model for single view
-    is_pre_trained = True
+    is_pre_trained = False
+    if 'is_single_pre_trained' in hypes and hypes['is_single_pre_trained']['pre_train_flag']:
+        is_pre_trained = True
     if is_pre_trained:
-        pretrain_path = "/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25"
-        initial_epoch = 24
+        pretrain_path = hypes['is_single_pre_trained']['pre_train_path']
+        initial_epoch = hypes['is_single_pre_trained']['pre_train_epoch']
         pre_train_model = torch.load(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch))
         model.load_state_dict(pre_train_model, strict=False)
         print("### Pre-trained point pillar {} loaded successfully! ###".format(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch)))
-        for name, value in model.named_parameters():
-            if name in pre_train_model:
-                value.requires_grad = False
+        fix = hypes['is_single_pre_trained']['pre_train_fix']
+        if fix:
+            for name, value in model.named_parameters():
+                if name in pre_train_model:
+                    value.requires_grad = False
     #############################################################################
 
     # we assume gpu is necessary
@@ -172,32 +176,6 @@ def main():
         # start_time = time.time()
         # times = []
         for i, batch_data in enumerate(train_loader):
-            # if isinstance(times, list):
-                # times = torch.zeros_like(batch_data['ego']['times'])
-            # times += batch_data['ego']['times']
-
-            # end_time = time.time()
-            # time_loaddata += (end_time - start_time)
-
-            # if i%10==0:
-            #     end_time = time.time()
-            #     print("=== 10 Batches finished, Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
-            #     start_time = time.time()
-            
-            # if i == 20:
-            #     print("================END=================")
-            #     print("=== data loading time consumed: %.1f minutes. ===" % (time_loaddata/60))
-            #     print("=== data todevice time consumed: %.1f minutes. ===" % (time_todevice/60))
-            #     print("=== data training time consumed: %.1f minutes. ===" % (time_training/60))
-            #     print("=== data loss and bp time consumed: %.1f minutes. ===" % (time_lossandbp/60))
-
-            #     times /= 60
-            #     print(times)
-
-            #     times[:-3] /= times[:-3].sum()
-            #     print(times[:-3])
-            #     return 0
-
             if batch_data is None:
                 continue
 

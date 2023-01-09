@@ -12,12 +12,13 @@ noise_setting:
     pos_mean: 0
     rot_mean: 0
 
-# comm_range: 100
-
+comm_range: 100
+num_sweep_frames: &past_k 1
+time_delay: 0
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 6
+  batch_size: &batch_size 4
   epoches: 30
   eval_freq: 2
   save_freq: 2
@@ -93,7 +94,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: true
+      resnet: false
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -131,7 +132,7 @@ model:
       agg_operator:
         mode: 'MAX'
         feature_dim: 256
-      multi_scale: true
+      multi_scale: false
       layer_nums: *layer_nums
       num_filters: *num_filters
 

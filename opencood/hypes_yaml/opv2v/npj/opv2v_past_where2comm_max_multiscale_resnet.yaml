@@ -13,18 +13,24 @@ noise_setting:
   #   rot_mean: 0
 
 comm_range: 1000
-
+exp_name: ""
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 1
+  batch_size: &batch_size 2
   epoches: 20
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
 
-num_sweep_frames: &past_k 2
+num_sweep_frames: &past_k 1
 time_delay: 0
+is_single_pre_trained:
+  pre_train_flag: true
+  pre_train_fix: true
+  pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
+  pre_train_epoch: 24
+
 
 fusion:
   core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
@@ -43,7 +49,7 @@ preprocess:
     max_voxel_train: 32000
     max_voxel_test: 70000
   # lidar range for each individual cav. Format: xyzxyz minmax
-  cav_lidar_range: &cav_lidar [-100.8, -40, -3, 100.8, 40, 1]
+  cav_lidar_range: &cav_lidar [-140.8, -40, -3, 140.8, 40, 1]
 
 data_augment:
   - NAME: random_world_flip
@@ -97,7 +103,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: false
+      resnet: true
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -120,8 +126,6 @@ model:
     #   kernel_size : [3]
     #   n_blocks: 1
     rain_model:
-      N: 8
-      d_model: 256
       d_ff: 256
       h: 8
       num_layers: 1
@@ -131,11 +135,11 @@ model:
       input_dim: 256
       voxel_size: *voxel_size
       downsample_rate: 1
-      in_channels: 256
       n_head: 8
       dropout_rate: 0
       only_attention: true
       communication:
+        num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
         thre: 0.10
         gaussian_smooth:
@@ -143,8 +147,7 @@ model:
           c_sigma: 1.0
       agg_operator:
         mode: 'RAIN' # MAX or RAIN
-        feature_dim: 256
-      multi_scale: false
+      multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 

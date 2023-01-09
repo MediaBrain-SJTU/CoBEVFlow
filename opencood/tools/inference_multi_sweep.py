@@ -102,7 +102,7 @@ def main():
 
     start_time = time.time()
     for i, batch_data in enumerate(data_loader):
-        print(f"{noise_level}_{i}")
+        # print(f"{noise_level}_{i}")
         if batch_data is None:
             continue
         with torch.no_grad():
