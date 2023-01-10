@@ -1,7 +1,7 @@
 name: opv2v_npj_where2comm_max_multiscale_resnet
-root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
-validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
-test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
+root_dir: "/DB/public/OPV2V_w_npy/train/"
+validate_dir: "/DB/public/OPV2V_w_npy/validate"
+test_dir: "/DB/public/OPV2V_w_npy/test"
 
 noise_setting:
   add_noise: False
@@ -13,6 +13,11 @@ noise_setting:
 
 comm_range: 1000
 
+is_single_pre_trained:
+  pre_train_epoch: 24
+  pre_train_fix: true
+  pre_train_flag: true
+  pre_train_path: /GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25
 
 yaml_parser: "load_point_pillar_params"
 train_params:

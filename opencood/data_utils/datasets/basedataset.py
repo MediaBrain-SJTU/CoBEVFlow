@@ -10,6 +10,8 @@ import os
 from collections import OrderedDict
 from pyparsing import Or
 
+import json
+
 import torch
 import numpy as np
 from torch.utils.data import Dataset
@@ -234,10 +236,26 @@ class BaseDataset(Dataset):
 
             # todo: load camera image in the future version
             # load the corresponding data into the dictionary
-            data[cav_id]['params'] = \
-                load_yaml(cav_content[timestamp_key]['yaml'])
-            data[cav_id]['lidar_np'] = \
-                pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+            
+            # data[cav_id]['params'] = \
+            #     load_yaml(cav_content[timestamp_key]['yaml'])
+            json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
+            if os.path.exists(json_file):
+                with open(json_file, "r") as f:
+                    data[cav_id]['params'] = json.load(f)
+            else:
+                data[cav_id]['params'] = \
+                        load_yaml(cav_content[timestamp_key]['yaml'])
+
+            # data[cav_id]['lidar_np'] = \
+            #     pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+
+            npy_file = cav_content[timestamp_key]['lidar'].replace("pcd", "npy")
+            if os.path.exists(npy_file):
+                data[cav_id]['lidar_np'] = np.load(npy_file)
+            else:
+                data[cav_id]['lidar_np'] = \
+                        pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
             
             if self.select_keypoint and 'lidar_keypoints_np' in cav_content[timestamp_key]:
                 data[cav_id]['lidar_keypoints_np'] = cav_content[timestamp_key]['lidar_keypoints_np']
