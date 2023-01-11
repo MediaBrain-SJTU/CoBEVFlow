@@ -18,7 +18,7 @@ exp_name: ""
 yaml_parser: "load_point_pillar_params"
 train_params:
   batch_size: &batch_size 2
-  epoches: 20
+  epoches: 30
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
@@ -26,7 +26,7 @@ train_params:
 num_sweep_frames: &past_k 1
 time_delay: 0
 is_single_pre_trained:
-  pre_train_flag: true
+  pre_train_flag: false
   pre_train_fix: true
   pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
   pre_train_epoch: 24
