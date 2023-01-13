@@ -61,6 +61,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             self.box_align = False
         '''
 
+        print("OPV2V dataset initialized! \
+                {} samples totally!".format(self.len_record[-1]))
 
     def __getitem__(self, idx):
         self.times = []

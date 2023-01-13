@@ -1,5 +1,5 @@
 name: opv2v_npj_raindrop_attn
-# root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
+
 root_dir: "/DB/public/OPV2V_w_npy/train/"
 validate_dir: "/DB/public/OPV2V_w_npy/validate"
 test_dir: "/DB/public/OPV2V_w_npy/test"
@@ -12,8 +12,16 @@ noise_setting:
   #   pos_mean: 0
   #   rot_mean: 0
 
-comm_range: 1000
 exp_name: ""
+num_sweep_frames: &past_k 1
+time_delay: 0
+is_single_pre_trained:
+  pre_train_flag: true
+  pre_train_fix: true
+  pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
+  pre_train_epoch: 24
+
+comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -22,15 +30,6 @@ train_params:
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
-
-num_sweep_frames: &past_k 1
-time_delay: 0
-is_single_pre_trained:
-  pre_train_flag: true
-  pre_train_fix: false
-  pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
-  pre_train_epoch: 24
-
 
 fusion:
   core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
@@ -111,6 +110,7 @@ model:
       num_upsample_filter: [128, 128, 128]
       compression: 0
       voxel_size: *voxel_size
+      
     shrink_header:
       kernal_size: [ 3 ]
       stride: [ 1 ]
@@ -125,19 +125,27 @@ model:
     #   padding: [1]
     #   kernel_size : [3]
     #   n_blocks: 1
+
     rain_model:
       d_ff: 256
       h: 8
       num_layers: 1
       neighbor_range: 2
-      dropout: 0.1
+      dropout: 0
       max_len: 300
       input_dim: 256
       voxel_size: *voxel_size
       downsample_rate: 1
       n_head: 8
-      dropout_rate: 0
       only_attention: true
+      fusion_setting:
+        sweep_length: *past_k
+        if_spatial_encoding: false
+        if_ego_time_encoding: false
+        if_nonego_time_encoding: False
+        if_sensor_encoding: false
+        if_time_attn_aggre: false
+        if_spatial_conv: false   
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
@@ -151,25 +159,25 @@ model:
       layer_nums: *layer_nums
       num_filters: *num_filters
 
-    fusion_args:
-      voxel_size: *voxel_size
-      downsample_rate: 1
-      in_channels: 256
-      n_head: 8
-      dropout_rate: 0
-      only_attention: true
-      communication:
-        round: 1
-        thre: 0.01
-        gaussian_smooth:
-          k_size: 5
-          c_sigma: 1.0
-      agg_operator:
-        mode: 'MAX'
-        feature_dim: 256
-      multi_scale: true
-      layer_nums: *layer_nums
-      num_filters: *num_filters
+    # fusion_args:
+    #   voxel_size: *voxel_size
+    #   downsample_rate: 1
+    #   in_channels: 256
+    #   n_head: 8
+    #   dropout_rate: 0
+    #   only_attention: true
+    #   communication:
+    #     round: 1
+    #     thre: 0.01
+    #     gaussian_smooth:
+    #       k_size: 5
+    #       c_sigma: 1.0
+    #   agg_operator:
+    #     mode: 'MAX'
+    #     feature_dim: 256
+    #   multi_scale: true
+    #   layer_nums: *layer_nums
+    #   num_filters: *num_filters
 
 
 loss:

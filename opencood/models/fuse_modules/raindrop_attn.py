@@ -311,15 +311,15 @@ class Spatial_conv(nn.Module):
         return x
 
 class AttentionFusion(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_heads, num_layers, neighbor_range, height, width, dropout, max_len=300):
+    def __init__(self, args, input_dim, hidden_dim, num_heads, num_layers, neighbor_range, height, width, dropout, max_len=300):
         super(AttentionFusion, self).__init__()
-        self.sweep_length = 2
-        self.if_spatial_encoding = False
-        self.if_ego_time_encoding = False
-        self.if_nonego_time_encoding = False
-        self.if_sensor_encoding = False
-        self.if_time_attn_aggre = False
-        self.if_spatial_conv = False    
+        self.sweep_length = args['sweep_length']
+        self.if_spatial_encoding = args['if_spatial_encoding']
+        self.if_ego_time_encoding = args['if_ego_time_encoding']
+        self.if_nonego_time_encoding = args['if_nonego_time_encoding']
+        self.if_sensor_encoding = args['if_sensor_encoding']
+        self.if_time_attn_aggre = args['if_time_attn_aggre']
+        self.if_spatial_conv = args['if_spatial_conv']    
         self.input_dim = input_dim 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -494,7 +494,7 @@ class raindrop_fuse(nn.Module):
                                                 with_spe=args['agg_operator']['with_spe'], 
                                                 with_scm=args['agg_operator']['with_scm'])
                 elif self.agg_mode == 'RAIN':
-                    fuse_network = AttentionFusion(input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len)
+                    fuse_network = AttentionFusion(args['fusion_setting'], input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len)
                     for p in fuse_network.parameters():
                         if p.dim() > 1:
                             nn.init.xavier_uniform_(p)

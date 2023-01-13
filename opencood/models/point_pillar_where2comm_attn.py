@@ -59,9 +59,8 @@ class PointPillarWhere2commAttn(nn.Module):
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
-        self.fusion_net = Where2comm(args['fusion_args'])
         self.rain_fusion = raindrop_fuse(args['rain_model'])
-        self.multi_scale = args['fusion_args']['multi_scale']
+        self.multi_scale = args['rain_model']['multi_scale']
         
         if self.shrink_flag:
             self.cls_head = nn.Conv2d(128 * 2, args['anchor_number'],

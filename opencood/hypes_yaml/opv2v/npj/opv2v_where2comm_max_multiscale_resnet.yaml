@@ -11,24 +11,24 @@ noise_setting:
   #   pos_mean: 0
   #   rot_mean: 0
 
-comm_range: 1000
-
+exp_name: ""
+num_sweep_frames: &past_k 1
+time_delay: 0
 is_single_pre_trained:
-  pre_train_flag: true
-  pre_train_fix: false 
+  pre_train_flag: false
+  pre_train_fix: true 
   pre_train_path: /GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25
   pre_train_epoch: 24
+
+comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
   batch_size: &batch_size 2
-  epoches: 30
+  epoches: 20
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
-
-num_sweep_frames: &past_k 1
-time_delay: 0
 
 fusion:
   core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
@@ -108,6 +108,7 @@ model:
       num_upsample_filter: [128, 128, 128]
       compression: 0
       voxel_size: *voxel_size
+      
     shrink_header:
       kernal_size: [ 3 ]
       stride: [ 1 ]
@@ -137,8 +138,13 @@ model:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
-        mode: 'MAX'
+        mode: 'ATTEN' # MAX, Transformer, ATTEN
         feature_dim: 256
+        # mode: 'Transformer'
+        # n_head: 8
+        # with_spe: true
+        # with_scm: true
+
       multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
