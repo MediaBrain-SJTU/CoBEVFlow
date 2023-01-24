@@ -79,6 +79,10 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("device: ", device)
 
+    # record lowest validation loss checkpoint.
+    lowest_val_loss = 1e5
+    lowest_val_epoch = -1    
+    
     #############################################################################
     # load pre-train model for single view
     is_pre_trained = False
@@ -211,7 +215,8 @@ def main():
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
             final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
-            criterion.logging(epoch, i, len(train_loader), writer)
+            if i%1000 == 0:
+                criterion.logging(epoch, i, len(train_loader), writer)
 
             # back-propagation
             final_loss.backward()
@@ -231,6 +236,8 @@ def main():
                 for i, batch_data in enumerate(val_loader):
                     if batch_data is None:
                         continue
+                    model.zero_grad()
+                    optimizer.zero_grad()
                     model.eval()
 
                     batch_data = train_utils.to_device(batch_data, device)
@@ -248,6 +255,18 @@ def main():
             print('At epoch %d, the validation loss is %f' % (epoch,
                                                               valid_ave_loss))
             writer.add_scalar('Validate_Loss', valid_ave_loss, epoch)
+
+            # lowest val loss
+            if valid_ave_loss < lowest_val_loss:
+                lowest_val_loss = valid_ave_loss
+                torch.save(model.state_dict(),
+                       os.path.join(saved_path,
+                                    'net_epoch_bestval_at%d.pth' % (epoch + 1)))
+                if lowest_val_epoch != -1 and os.path.exists(os.path.join(saved_path,
+                                    'net_epoch_bestval_at%d.pth' % (lowest_val_epoch))):
+                        os.remove(os.path.join(saved_path,
+                                    'net_epoch_bestval_at%d.pth' % (lowest_val_epoch)))
+                lowest_val_epoch = epoch + 1
 
         if epoch % hypes['train_params']['save_freq'] == 0:
             torch.save(model.state_dict(),

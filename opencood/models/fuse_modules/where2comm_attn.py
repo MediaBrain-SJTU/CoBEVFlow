@@ -260,6 +260,7 @@ class Where2comm(nn.Module):
         pairwise_t_matrix[...,0,2] = pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
         pairwise_t_matrix[...,1,2] = pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
 
+        # rm = torch.ones_like(rm) # 所有地块进行通信，debug用，需注释掉
         if self.multi_scale:
             ups = []
             # backbone.__dict__()
@@ -271,7 +272,7 @@ class Where2comm(nn.Module):
                 x = feats[i] if with_resnet else backbone.blocks[i](x)
 
                 ############ 1. Communication (Mask the features) #########
-                if i==0:# TODO: mask conv
+                if i==0:
                     if self.communication:
                         batch_confidence_maps = self.regroup(rm, record_len)# cls_head 出来的 map 
                         _, communication_masks, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)

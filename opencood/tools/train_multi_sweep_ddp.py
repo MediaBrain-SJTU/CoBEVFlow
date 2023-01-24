@@ -9,13 +9,16 @@ import torch
 from torch.utils.data import DataLoader, DistributedSampler
 from tensorboardX import SummaryWriter
 
+import importlib
 import opencood.hypes_yaml.yaml_utils as yaml_utils
 from opencood.tools import train_utils
 from opencood.data_utils.datasets import build_dataset
 from opencood.tools import multi_gpu_utils
 from icecream import ic
 import tqdm
+import ipdb
 
+run_test = True
 # CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node=4 --use_env opencood/tools/train_ddp.py --hypes_yaml ${CONFIG_FILE} [--model_dir  ${CHECKPOINT_FOLDER}
 
 def train_parser():
@@ -38,8 +41,10 @@ def main():
     opt = train_parser()
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
     multi_gpu_utils.init_distributed_mode(opt)
-
+    # print('========rank========\n', opt.rank)
+    # print('========gpu=======\n', opt.gpu)
     print('Dataset Building')
+    start_time = time.time()
     opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)
     opencood_validate_dataset = build_dataset(hypes,
                                               visualize=False,
@@ -77,6 +82,9 @@ def main():
                                 shuffle=True,
                                 pin_memory=True,
                                 drop_last=True)
+    end_time = time.time()
+    print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
+    start_time = time.time()
 
     print('Creating Model')
     model = train_utils.create_model(hypes)
@@ -85,7 +93,6 @@ def main():
     # record lowest validation loss checkpoint.
     lowest_val_loss = 1e5
     lowest_val_epoch = -1
-
 
     # if we want to train from last checkpoint.
     if opt.model_dir:
@@ -118,7 +125,8 @@ def main():
     # optimizer setup
     optimizer = train_utils.setup_optimizer(hypes, model_without_ddp)
     scheduler = train_utils.setup_lr_schedular(hypes, optimizer, init_epoch=init_epoch)
-
+    end_time = time.time()
+    print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
     # record training
     writer = SummaryWriter(saved_path)
 
@@ -154,7 +162,7 @@ def main():
                 with torch.cuda.amp.autocast():
                     ouput_dict = model(batch_data['ego'])
                     final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
-
+            # if i % 1000==0:
             criterion.logging(epoch, i, len(train_loader), writer)
 
             if supervise_single_flag:
@@ -163,6 +171,7 @@ def main():
                 else:
                     with torch.cuda.amp.autocast():
                         final_loss += criterion(ouput_dict, batch_data['ego']['label_dict_single'], suffix="_single")
+                # if i % 1000==0:
                 criterion.logging(epoch, i, len(train_loader), writer, suffix="_single")
 
             if not opt.half:
@@ -219,10 +228,10 @@ def main():
 
     print('Training Finished, checkpoints saved to %s' % saved_path)
 
-    run_test = True
+    
     if run_test:
         fusion_method = opt.fusion_method
-        cmd = f"python /GPFS/rhome/yifanlu/workspace/OpenCOOD/opencood/tools/inference.py --model_dir {saved_path} --fusion_method {fusion_method}"
+        cmd = f"python opencood/tools/inference_multi_sweep.py --model_dir {saved_path} --fusion_method {fusion_method}"
         print(f"Running command: {cmd}")
         os.system(cmd)
 

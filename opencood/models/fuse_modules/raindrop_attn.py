@@ -140,7 +140,7 @@ class PositionalEncoding_irregular_time(nn.Module):
     def __init__(self, d_model_feature, d_model_hidden, dropout):
         super(PositionalEncoding_irregular_time, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
-        self.d_model = d_model_hidden
+        self.d_model = d_model_feature
         self.linear = nn.Linear(d_model_feature+d_model_hidden, d_model_feature)
         self.mode = 'plus'
 
@@ -301,25 +301,77 @@ class Spatial_conv(nn.Module):
         )
 
         self.relu = nn.ReLU()
-        self.bn = nn.BatchNorm2d(num_features=output_channels)
+        # self.bn = nn.BatchNorm2d(num_features=output_channels)
 
     def forward(self, x):
-
+        init_x = x.clone()
         x = self.conv(x)
         x = self.relu(x)
-        x = self.bn(x)
-        return x
+        # x = self.bn(x)
+        return x+init_x
+
+class SpatialAttention_mtf(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention_mtf, self).__init__()
+
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=kernel_size // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, curr, prev):#####(batch, channel, h, w)
+        avg_out = torch.mean(curr, dim=1, keepdim=True)
+        max_out, _ = torch.max(curr, dim=1, keepdim=True)
+        y = torch.cat([avg_out, max_out], dim=1)
+        y = self.conv1(y)
+        return self.sigmoid(y) * prev ####(batch-1, channel, h, w)
+
+class ScaledDotProductAttention(nn.Module):
+    """
+    Scaled Dot-Product Attention proposed in "Attention Is All You Need"
+    Compute the dot products of the query with all keys, divide each by sqrt(dim),
+    and apply a softmax function to obtain the weights on the values
+    Args: dim, mask
+        dim (int): dimention of attention
+        mask (torch.Tensor): tensor containing indices to be masked
+    Inputs: query, key, value, mask
+        - **query** (batch, q_len, d_model): tensor containing projection
+          vector for decoder.
+        - **key** (batch, k_len, d_model): tensor containing projection
+          vector for encoder.
+        - **value** (batch, v_len, d_model): tensor containing features of the
+          encoded input sequence.
+        - **mask** (-): tensor containing indices to be masked
+    Returns: context, attn
+        - **context**: tensor containing the context vector from
+          attention mechanism.
+        - **attn**: tensor containing the attention (alignment) from the
+          encoder outputs.
+    """
+
+    def __init__(self, dim):
+        super(ScaledDotProductAttention, self).__init__()
+        self.sqrt_dim = np.sqrt(dim)
+
+    def forward(self, query, key, value, mask):
+        score = torch.bmm(query, key.transpose(1, 2)) / self.sqrt_dim
+        if mask != None:
+            score = score.masked_fill(mask == 0, -1e10) 
+        attn = F.softmax(score, -1)
+        context = torch.bmm(attn, value)
+        return context
 
 class AttentionFusion(nn.Module):
-    def __init__(self, args, input_dim, hidden_dim, num_heads, num_layers, neighbor_range, height, width, dropout, max_len=300):
+    def __init__(self, settings, input_dim, hidden_dim, num_heads, num_layers, neighbor_range, height, width, dropout, max_len=300):
         super(AttentionFusion, self).__init__()
-        self.sweep_length = args['sweep_length']
-        self.if_spatial_encoding = args['if_spatial_encoding']
-        self.if_ego_time_encoding = args['if_ego_time_encoding']
-        self.if_nonego_time_encoding = args['if_nonego_time_encoding']
-        self.if_sensor_encoding = args['if_sensor_encoding']
-        self.if_time_attn_aggre = args['if_time_attn_aggre']
-        self.if_spatial_conv = args['if_spatial_conv']    
+        self.sweep_length = settings['sweep_length']
+        self.if_spatial_encoding = settings['if_spatial_encoding']
+        self.if_ego_time_encoding = settings['if_ego_time_encoding']
+        self.if_nonego_time_encoding = settings['if_nonego_time_encoding']
+        self.if_sensor_encoding = settings['if_sensor_encoding']
+        self.if_time_attn_aggre = settings['if_time_attn_aggre']
+        self.if_spatial_conv = settings['if_spatial_conv']
+        self.if_dotproductattn = settings['if_dotproductattn']
+        self.use_mask = settings['use_mask']
+        self.confidence_fetch = settings['confidence_fetch']  
         self.input_dim = input_dim 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -346,8 +398,9 @@ class AttentionFusion(nn.Module):
         if self.if_spatial_conv:  
             self.layers_spatial = clones(Spatial_conv(self.input_dim,self.input_dim,kernel_size=5),num_layers)
         # self.layers_spatial = Spatial_conv(self.input_dim,self.input_dim,kernel_size=5)
-        
-        
+        if self.if_dotproductattn:
+            self.dotproductattn = ScaledDotProductAttention(self.input_dim)
+
         print("================Rain attention Init================")
 
     
@@ -379,13 +432,46 @@ class AttentionFusion(nn.Module):
             ego cav's fused feature at current frame.
         """
         
+        ego_features = features[:1].clone()
+        return ego_features[0]
+        # if self.if_time_attn_aggre != True and self.if_dotproductattn != True:
+        #     features = torch.max(features, dim=0)[0]
+        #     if self.if_spatial_conv:
+        #         features = features.unsqueeze(0)
+        #         features = self.layers_spatial[0](features)
+        #     return features.squeeze(0)
 
-        if self.if_time_attn_aggre != True:
-            features = torch.max(features, dim=0)[0]
-            if self.if_spatial_conv:
-                features = features.unsqueeze(0)
-                features = self.layers_spatial[0](features)
-            return features.squeeze(0)
+        #### BEGIN ST atten ####
+        #### Spatial
+        cav_num, C, H, W = features.shape
+        # features = features.view(cav_num, C, -1).permute(2, 0, 1) #  (H*W, cav_num, C), perform self attention on each pixel.
+        # masks = valid_mask.view(cav_num, H*W).permute(1,0)
+        # masks = masks.unsqueeze(-1).repeat(1,1,cav_num)
+        
+        # features = self.dotproductattn(features, features, features, masks)
+        # features = features.permute(1, 0, 2).view(cav_num, H, W, C)
+
+        #### Temporal
+        features = features.permute(0, 2, 3, 1)  #(B, H, W, C)
+        features = self.time_encoding(features,time_stamps) #(B, H, W, C)
+        features = features.view(cav_num, -1, C).permute(1, 0, 2) #  (H*W, B, C), perform self attention on each time_stamps.
+        masks = valid_mask.view(cav_num, H*W).permute(1, 0).unsqueeze(-1).repeat(1, 1, cav_num)
+        features = self.dotproductattn(features, features, features, masks) #(HW, B, C) 
+        features = features.permute(1, 2, 0).view(cav_num, C, H, W)[0]
+
+        return features
+
+        #### END ST atten ####
+
+        if self.confidence_fetch == False:
+            cav_num, C, H, W = features.shape
+            features = features.view(cav_num, C, -1).permute(2, 0, 1) #  (H*W, cav_num, C), perform self attention on each pixel.
+            masks = valid_mask.view(cav_num, H*W).permute(1,0)
+            masks = masks.unsqueeze(-1).repeat(1,1,cav_num)
+            
+            features = self.dotproductattn(features, features, features, masks)
+            features = features.permute(1, 2, 0).view(cav_num, C, H, W)[0] 
+            return features
 
         valid_mask = valid_mask.squeeze(1)
         
@@ -428,7 +514,13 @@ class AttentionFusion(nn.Module):
         for l in range(self.num_layers):
                 
             if masks.shape[0] != 0:
-                features_to_aggre = self.layers_temporal[l](features_to_aggre,features_to_aggre,features_to_aggre,masks)
+                if self.if_dotproductattn:
+                    # if self.use_mask == False:
+                    #     masks =  None
+                    # features_to_aggre = self.dotproductattn(features_to_aggre,features_to_aggre,features_to_aggre,masks)
+                    features_to_aggre[:,0] = torch.max(features_to_aggre,dim=1)[0]
+                else:
+                    features_to_aggre = self.layers_temporal[l](features_to_aggre,features_to_aggre,features_to_aggre,masks)
                 features[:,nonego_idx[0],nonego_idx[1],:] = features_to_aggre.permute(1,0,2)
            
 
@@ -589,18 +681,11 @@ class raindrop_fuse(nn.Module):
             for i in range(self.num_levels):
                 x = feats[i] if with_resnet else backbone.blocks[i](x)
 
-                ############ 2. Split the confidence map #######################
-                # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]
-                # for example, i=1, past_k=3, b_1 has 2 cav, b_2 has 3 cav ... :
-                # [[2*3, 256*2, 100/2, 252/2], [3*3, 256*2, 100/2, 252/2], ...]
-                batch_node_features = self.regroup(x, record_len, K)
-                batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
-                batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
-
                 ############ 1. Communication (Mask the features) #########
                 if i==0:
                     if self.communication:
-                        batch_confidence_maps = self.regroup(rm, record_len, K)
+                        batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
+                        batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
                         _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                         communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
                         x = x * communication_masks_tensor
@@ -611,6 +696,12 @@ class raindrop_fuse(nn.Module):
                         communication_masks_tensor = F.max_pool2d(communication_masks_tensor, kernel_size=2)
                         x = x * communication_masks_tensor
                 
+                ############ 2. Split the confidence map #######################
+                # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]
+                # for example, i=1, past_k=3, b_1 has 2 cav, b_2 has 3 cav ... :
+                # [[2*3, 256*2, 100/2, 252/2], [3*3, 256*2, 100/2, 252/2], ...]
+                batch_node_features = self.regroup(x, record_len, K)
+
                 ############ 3. Fusion ####################################
                 x_fuse = []
                 for b in range(B):
@@ -629,9 +720,19 @@ class raindrop_fuse(nn.Module):
                     if self.agg_mode == 'RAIN':
                         # for sensor embedding
                         sensor_dist = -1# (B, H, W)
-                        x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                        # x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                        # TODO: for scale debug
+                        if i==self.num_levels-1:
+                            x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                        else:
+                            x_fuse.append(neighbor_feature[0])
                     else: # ATTEN, MAX, Transformer
-                        x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                        # x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                        # TODO: for scale debug
+                        if i==self.num_levels-1:
+                            x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                        else:
+                            x_fuse.append(neighbor_feature[0])
 
                 x_fuse = torch.stack(x_fuse)
 
