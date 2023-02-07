@@ -113,6 +113,11 @@ class PointPillarWhere2commAttn(nn.Module):
         record_len = data_dict['record_len']
         record_frames = data_dict['past_k_time_interval']                       #(B, )
         pairwise_t_matrix = data_dict['pairwise_t_matrix']                      #(B, L, k, 4, 4)
+        
+        debug = 0
+        B, _, k, _, _ = pairwise_t_matrix.shape
+        for i in range(B):
+            debug += record_len[i]*k
 
         batch_dict = {'voxel_features': voxel_features,
                       'voxel_coords': voxel_coords,
@@ -121,9 +126,10 @@ class PointPillarWhere2commAttn(nn.Module):
         # n, 4 -> n, c  ('pillar_features')
         batch_dict = self.pillar_vfe(batch_dict)
         # (n, c) -> (batch_cav_size, C, H, W) put pillars into spatial feature map ('spatial_features')
+        # import ipdb; ipdb.set_trace()
         batch_dict = self.scatter(batch_dict)
         batch_dict = self.backbone(batch_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
-        # N, C, H', W'. [N, 384, 100, 252]
+        # N, C, H', W'. [N, 384, 100, 352]
         spatial_features_2d = batch_dict['spatial_features_2d']
         
         # downsample feature to reduce memory

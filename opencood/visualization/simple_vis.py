@@ -79,19 +79,20 @@ def visualize(pred_box_tensor, gt_tensor, pcd, pc_range, save_path, method='3d',
 
             canvas_xy, valid_mask = canvas.get_canvas_coords(pcd_np) # Get Canvas Coords
             canvas.draw_canvas_points(canvas_xy[valid_mask]) # Only draw valid points
-            if vis_pred_box:
-                canvas.draw_boxes(pred_box_np, colors=(255,0,0), texts=pred_name)
             if vis_gt_box:
                 canvas.draw_boxes(gt_box_np,colors=(0,255,0), texts=gt_name)
+            if vis_pred_box:
+                canvas.draw_boxes(pred_box_np, colors=(255,0,0), texts=pred_name)
 
         elif method == '3d':
             canvas = canvas_3d.Canvas_3D(left_hand=left_hand)
             canvas_xy, valid_mask = canvas.get_canvas_coords(pcd_np)
             canvas.draw_canvas_points(canvas_xy[valid_mask])
-            if vis_pred_box:
-                canvas.draw_boxes(pred_box_np, colors=(255,0,0), texts=pred_name)
             if vis_gt_box:
                 canvas.draw_boxes(gt_box_np,colors=(0,255,0), texts=gt_name)
+            if vis_pred_box:
+                canvas.draw_boxes(pred_box_np, colors=(255,0,0), texts=pred_name)
+            
         else:
             raise(f"Not Completed for f{method} visualization.")
 

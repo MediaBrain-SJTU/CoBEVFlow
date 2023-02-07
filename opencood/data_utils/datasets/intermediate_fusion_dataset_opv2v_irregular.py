@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-# Author: Runsheng Xu <rxx3386@ucla.edu>, Yifan Lu
+# Author: sizhewei @ 2023/1/27
 # License: TDG-Attribution-NonCommercial-NoDistrib
-# Modified: sizhewei @ 2022/11/05
 
 """
 Dataset class for intermediate fusion with past k frames
@@ -13,9 +12,10 @@ import numpy as np
 import torch
 import math
 import copy
-
+import sys
 import time
 import json
+from scipy import stats
 import opencood.data_utils.post_processor as post_processor
 import opencood.utils.pcd_utils as pcd_utils
 from opencood.utils.keypoint_utils import bev_sample, get_keypoints
@@ -32,8 +32,10 @@ from opencood.utils.common_utils import read_json
 from opencood.utils import box_utils
 # from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 
+# global, for debug use
+illegal_path_list = set()
 
-class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
+class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
     """
     This class is for intermediate fusion where each vehicle transmit the
     deep features to ego.
@@ -60,6 +62,18 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             self.tau = params['time_delay'] 
         else:
             self.tau = 0
+
+        if 'binomial_n' in params:
+            self.binomial_n = params['binomial_n']
+        else:
+            self.binomial_n = 0
+
+        if 'binomial_p' in params:
+            self.binomial_p = params['binomial_p']
+        else:
+            self.binomial_p = 1
+
+        self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
 
         assert 'proj_first' in params['fusion']['args']
         if params['fusion']['args']['proj_first']:
@@ -111,11 +125,43 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         for (i, scenario_folder) in enumerate(scenario_folders):
             self.scenario_database.update({i: OrderedDict()})
 
+            # copy timestamps npy file
+            timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
+            time_annotations = np.load(timestamps_file)
+
             # at least 1 cav should show up
             cav_list = sorted([x 
                                for x in os.listdir(scenario_folder) if 
-                               os.path.isdir(os.path.join(scenario_folder, x))])
+                               os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
             assert len(cav_list) > 0
+
+            # use the frame number as key, the full path as the values
+            yaml_files = sorted([x
+                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                        x.endswith(".json")], 
+                        key=lambda y:float((y.split('/')[-1]).split('.json')[0]))
+            if len(yaml_files)==0:
+                yaml_files = sorted([x 
+                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                            x.endswith('.yaml')], key=lambda y:float((y.split('/')[-1]).split('.yaml')[0]))
+
+            start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
+            while(1):
+                time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
+                time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
+                if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
+                    start_timestamp += 1
+                else:
+                    break
+
+            end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
+            if start_timestamp%2 == 0:
+                # even
+                end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
+            else:
+                end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
+            num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
+            regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
 
             # loop over all CAV data
             for (j, cav_id) in enumerate(cav_list):
@@ -124,17 +170,15 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                     break
                 self.scenario_database[i][cav_id] = OrderedDict()
 
-                # save all yaml files to the dictionary
                 cav_path = os.path.join(scenario_folder, cav_id)
 
-                # use the frame number as key, the full path as the values
-                yaml_files = \
-                    sorted([os.path.join(cav_path, x)
-                            for x in os.listdir(cav_path) if
-                            x.endswith('.yaml')])
-                timestamps = self.extract_timestamps(yaml_files)	
+                if j==0: # ego
+                    timestamps = regular_timestamps
+                else:
+                    timestamps = list(time_annotations[j-1, :])
 
                 for timestamp in timestamps:
+                    timestamp = "%.3f" % float(timestamp)
                     self.scenario_database[i][cav_id][timestamp] = \
                         OrderedDict()
 
@@ -150,6 +194,24 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                         lidar_file
                     # self.scenario_database[i][cav_id][timestamp]['camera0'] = \
                         # camera_files
+                
+                # regular的timestamps 用于做 curr 真实时刻的ground truth
+                self.scenario_database[i][cav_id]['regular'] = OrderedDict()
+                for timestamp in regular_timestamps:
+                    timestamp = "%.3f" % float(timestamp)
+                    self.scenario_database[i][cav_id]['regular'][timestamp] = \
+                        OrderedDict()
+
+                    yaml_file = os.path.join(cav_path,
+                                             timestamp + '.yaml')
+                    lidar_file = os.path.join(cav_path,
+                                              timestamp + '.pcd')
+                    # camera_files = self.load_camera_files(cav_path, timestamp)
+
+                    self.scenario_database[i][cav_id]['regular'][timestamp]['yaml'] = \
+                        yaml_file
+                    self.scenario_database[i][cav_id]['regular'][timestamp]['lidar'] = \
+                        lidar_file
 
                 # Assume all cavs will have the same timestamps length. Thus
                 # we only need to calculate for the first vehicle in the
@@ -157,21 +219,20 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 if j == 0:  # ego 
                     # we regard the agent with the minimum id as the ego
                     self.scenario_database[i][cav_id]['ego'] = True
-                    num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
+                    # num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
+                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k
                     if not self.len_record:
                         self.len_record.append(num_ego_timestamps)
                     else:
                         prev_last = self.len_record[-1]
                         self.len_record.append(prev_last + num_ego_timestamps)
-
                 else:
                     self.scenario_database[i][cav_id]['ego'] = False
                     
 
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
-        # projected instead.
-        # TODO: check pre_process & post_processor 是否符合新的数据结构 
+        # projected instead. 
         self.pre_processor = build_preprocessor(params['preprocess'],
                                                 train)
         self.post_processor = post_processor.build_postprocessor(
@@ -180,8 +241,36 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
         self.anchor_box = self.post_processor.generate_anchor_box()
 
-        print("OPV2V Multi-sweep dataset with non-ego cavs' {} time delay and past {} frames collected initialized! \
-                {} samples totally!".format(self.tau, self.k, self.len_record[-1]))
+        print("=== OPV2V-Irregular Multi-sweep dataset with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
+
+    def extract_timestamps(self, yaml_files):
+        """
+        Given the list of the yaml files, extract the mocked timestamps.
+
+        Parameters
+        ----------
+        yaml_files : list
+            The full path of all yaml files of ego vehicle
+
+        Returns
+        -------
+        timestamps : list
+            The list containing timestamps only.
+        """
+        timestamps = []
+
+        for file in yaml_files:
+            res = file.split('/')[-1]
+            if res.endswith('.yaml'):
+                timestamp = res.replace('.yaml', '')
+            elif res.endswith('.json'):
+                timestamp = res.replace('.json', '')
+            else:
+                print("Woops! There is no processing method for file {}".format(res))
+                sys.exit(1)
+            timestamps.append(timestamp)
+
+        return timestamps
 
     def retrieve_base_data(self, idx):
         """
@@ -210,11 +299,17 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                         [0]:{		(id)			# pose | lidar | label
                             'params': (yaml),
                             'lidar_np': (numpy),
-                            'timestamp': string
+                            'timestamp': string,
+                            'time_diff': float,
+                            'sample_interval': int
                         },
                         [1] : {},	(id-1)			# pose | lidar | label
                         ...,						# pose | lidar | label
                         [k-1] : {} (id-(k-1))		# pose | lidar | label
+                    },
+                    'debug' : {                     # debug use
+                        scene_name : string         
+                        cav_id : string
                     }
                     
                 }, 
@@ -229,7 +324,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                         [0] : {		(id - \tau)		# pose | lidar | label
                             'params': (yaml),
                             'lidar_np': (numpy),
-                            'timestamp': string
+                            'timestamp': string,
+                            'time_diff': float,
+                            'sample_interval': int
                         }			
                         ..., 						# pose | lidar | label
                         [k-1]:{}  (id-\tau-(k-1))	# pose | lidar | label
@@ -248,20 +345,34 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
         debug_times = np.zeros((3,))
         start_time = time.time()
+        
+        # 生成冻结分布函数
+        bernoulliDist = stats.bernoulli(self.binomial_p) 
 
         data = OrderedDict()
+        # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
+        curr_timestamp_idx = idx if scenario_index == 0 else \
+                        idx - self.len_record[scenario_index - 1]
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
+        
         # load files for all CAVs
         for cav_id, cav_content in scenario_database.items():
             '''
             cav_content 
             {
-                'ego' : true / false , 
-                timestamp1 : {
+                timestamp_1 : {
                     yaml: path,
                     lidar: path, 
                     cameras: list of path
                 },
                 ...
+                timestamp_n : {
+                    yaml: path,
+                    lidar: path, 
+                    cameras: list of path
+                },
+                'regular' : {},
+                'ego' : true / false , 
             },
             '''
             data[cav_id] = OrderedDict()
@@ -270,31 +381,41 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             
             # current frame, for co-perception lable use
             data[cav_id]['curr'] = {}
-            timestamp_index = idx if scenario_index == 0 else \
-                        idx - self.len_record[scenario_index - 1]
-            timestamp_index = timestamp_index + self.tau + self.k - 1
-            timestamp_key = list(cav_content.items())[timestamp_index][0]
+            
+            timestamp_key = list(cav_content['regular'].items())[curr_timestamp_idx][0]
             
             time_s = time.time()
             # load param file: json is faster than yaml
-            json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
+            json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
+            # /GPFS/public/OPV2V_irregular_npy/train/2021_09_09_13_20_58/1244/70.000.json
+
+            # debug use, store the scene name
+            scene_name = json_file.split('/')[-3]
+
             if os.path.exists(json_file):
                 with open(json_file, "r") as f:
                     data[cav_id]['curr']['params'] = json.load(f)
             else:
                 data[cav_id]['curr']['params'] = \
-                        load_yaml(cav_content[timestamp_key]['yaml'])
+                        load_yaml(cav_content['regular'][timestamp_key]['yaml'])
+            # 没有 lidar pose
+            if not ('lidar_pose' in data[cav_id]['curr']['params']):
+                tmp_ego_pose = np.array(data[cav_id]['curr']['params']['true_ego_pos'])
+                tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
+                data[cav_id]['curr']['params']['lidar_pose'] = list(tmp_ego_pose)
+            
             time_e = time.time()
             debug_times[0] += (time_e - time_s)
 
             time_s = time.time()
             # load lidar file: npy is faster than pcd
-            npy_file = cav_content[timestamp_key]['lidar'].replace("pcd", "npy")
+            npy_file = cav_content['regular'][timestamp_key]['lidar'].replace("pcd", "npy")
+            
             if os.path.exists(npy_file):
                 data[cav_id]['curr']['lidar_np'] = np.load(npy_file)
             else:
                 data[cav_id]['curr']['lidar_np'] = \
-                        pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
+                        pcd_utils.pcd_to_np(cav_content['regular'][timestamp_key]['lidar'])
             time_e = time.time()
             debug_times[1] += (time_e - time_s)
 
@@ -302,18 +423,22 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                     timestamp_key
             data[cav_id]['curr']['time_diff'] = 0
 
+            latest_sample_stamp_idx = curr_timestamp_idx
             # past k frames, pose | lidar | label(for single view confidence map generator use)
-            if data[cav_id]['ego']:
-                temp = self.tau
-            else:
-                temp = 0
             for i in range(self.k):
+                # 确定采样间隔
+                if data[cav_id]['ego']:
+                    sample_inverval = self.sample_interval_exp if i!=0 else 0
+                else:
+                    # 模拟 k 次伯努利实验
+                    trails = bernoulliDist.rvs(self.binomial_n)
+                    sample_inverval = sum(trails)
+                
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = OrderedDict()
-                timestamp_index = idx if scenario_index == 0 else \
-                    idx + i - self.len_record[scenario_index - 1] # TODO: 这里面原来错加了一个i，记得改正
-                timestamp_index = timestamp_index + self.k - 1 - i + temp
+                timestamp_index = latest_sample_stamp_idx - sample_inverval
                 timestamp_key = list(cav_content.items())[timestamp_index][0]
+                latest_sample_stamp_idx = timestamp_index
                 # load the corresponding data into the dictionary
                 time_s = time.time()
                 # load param file: json is faster than yaml
@@ -324,6 +449,11 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 else:
                     data[cav_id]['past_k'][i]['params'] = \
                         load_yaml(cav_content[timestamp_key]['yaml'])
+                # 没有 lidar pose
+                if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
+                    tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
+                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
+                    data[cav_id]['past_k'][i]['params']['lidar_pose'] = list(tmp_ego_pose)
                 time_e = time.time()
                 debug_times[0] += (time_e - time_s)
 
@@ -340,11 +470,15 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
                 data[cav_id]['past_k'][i]['timestamp'] = \
                     timestamp_key
+                data[cav_id]['past_k'][i]['sample_interval'] = \
+                    sample_inverval
                 data[cav_id]['past_k'][i]['time_diff'] = \
                     self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp'])
-
+            data[cav_id]['debug'] = OrderedDict()
+            data[cav_id]['debug']['scene'] = scene_name
+            data[cav_id]['debug']['cav_id'] = cav_id
+        
         end_time = time.time()
-
         debug_times[2] += (end_time - start_time)
 
         return data, debug_times
@@ -371,11 +505,16 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 np.array of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
         }
         '''
+        # TODO: debug use
+        global illegal_path_list
+        
+        # if idx < 330:
+        #     return None
+
         self.times = []
         self.times.append(time.time())
         # base_data_dict
         base_data_dict, time4data = self.retrieve_base_data(idx)
-
         
         self.times.append(time.time())
 
@@ -420,7 +559,10 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
             curr_lidar_pose_list.append(selected_cav_base['curr']['params']['lidar_pose']) # 6dof pose
             cav_id_list.append(cav_id)  
-
+        # filter those out of communicate range
+        for cav_id in too_far:
+            base_data_dict.pop(cav_id)
+        
         single_label_dict_stack = []
         object_stack = []
         object_id_stack = []
@@ -428,9 +570,13 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         curr_feature_stack = []
         past_k_pose_stack = []
         past_k_features_stack = [] 
-        past_k_time_diffs_stack = []
         past_k_tr_mats = []
         past_k_label_dicts_stack = []
+
+        past_k_sample_interval_stack = []
+        past_k_time_diffs_stack = []
+        
+        illegal_cav = []
 
         if self.visualize:
             projected_lidar_stack = []
@@ -460,6 +606,14 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 idx
             )
 
+            if selected_cav_processed['if_no_point']: # 把点的数量不合法的车排除
+                illegal_cav.append(cav_id)
+                # 把出现不合法sample的 场景、车辆、时刻 记录下来:
+                illegal_path = os.path.join(base_data_dict[cav_id]['debug']['scene'], cav_id, base_data_dict[cav_id]['past_k'][0]['timestamp']+'.npy')
+                illegal_path_list.add(illegal_path)
+                print(illegal_path)
+                continue
+
             if self.visualize:
                 projected_lidar_stack.append(
                     selected_cav_processed['projected_lidar'])
@@ -481,28 +635,30 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             past_k_pose_stack.append(selected_cav_processed['past_k_poses'])
             # time differences: N, k
             past_k_time_diffs_stack += selected_cav_processed['past_k_time_diffs']
+            # sample intervals: N, k
+            past_k_sample_interval_stack += selected_cav_processed['past_k_sample_interval']
             # past k frames to ego pose trans matrix, list of len=N, past_k_tr_mats[i]: ndarray(k, 4, 4)
             past_k_tr_mats.append(selected_cav_processed['past_k_tr_mats'])
             # past k label dict: N, k, object_num, 7
             # past_k_label_dicts_stack.append(selected_cav_processed['past_k_label_dicts'])
         # {pos: array[num_cav, k, 100, 252, 2], neg: array[num_cav, k, 100, 252, 2], target: array[num_cav, k, 100, 252, 2]}
         # past_k_label_dicts = self.post_processor.merge_label_to_dict(past_k_label_dicts_stack)
-
         self.times.append(time.time())
+
+        # filter those cav who has no points left
+        # then we can calculate get_pairwise_transformation
+        for cav_id in illegal_cav:
+            base_data_dict.pop(cav_id)
+            cav_id_list.remove(cav_id)
 
         merged_curr_feature_dict = self.merge_features_to_dict(curr_feature_stack)
         
         single_label_dict = self.post_processor.collate_batch(single_label_dict_stack)
 
         past_k_time_diffs_stack = np.array(past_k_time_diffs_stack)
+        past_k_sample_interval_stack = np.array(past_k_sample_interval_stack)
 
         self.times.append(time.time())
-
-        ########## Added by Yifan Lu 2022.4.5 ################
-        # filter those out of communicate range
-        # then we can calculate get_pairwise_transformation
-        for cav_id in too_far:
-            base_data_dict.pop(cav_id)
         
         pairwise_t_matrix = \
             self.get_past_k_pairwise_transformation2ego(base_data_dict, 
@@ -514,7 +670,11 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         # exclude all repetitive objects    
         unique_indices = \
             [object_id_stack.index(x) for x in set(object_id_stack)]
-        object_stack = np.vstack(object_stack)
+        try:
+            object_stack = np.vstack(object_stack)
+        except ValueError:
+            # print("!!! vstack ValueError !!!")
+            return None
         object_stack = object_stack[unique_indices]
 
         # make sure bounding boxes across all frames have the same number
@@ -561,10 +721,18 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
              'curr_lidar_poses': curr_lidar_poses,
              'past_k_lidar_poses': past_k_lidar_poses,
              'past_k_time_diffs': past_k_time_diffs_stack,
+             'past_k_sample_interval': past_k_sample_interval_stack,
              'times': self.times})
 
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
+        try:
+            processed_data_dict['ego'].update({'avg_sample_interval':\
+                sum(past_k_sample_interval_stack[self.k:]) / len(past_k_sample_interval_stack[self.k:])})
+        except ZeroDivisionError:
+            # print("!!! ZeroDivisionError !!!")
+            return None
+
         if self.visualize:
             processed_data_dict['ego'].update({'origin_lidar':
                 np.vstack(projected_lidar_stack)})
@@ -591,7 +759,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                     [0]:{		(id) / (id-\tau-0)				# pose | lidar | label
                         'params': (yaml),
                         'lidar_np': (numpy),
-                        'timestamp': string
+                        'timestamp': string,
+                        'time_diff': float
                     },
                     [1] : {},	(id-1) / (id-\tau-1))			# pose | lidar | label
                     ...,										# pose | lidar | label
@@ -649,9 +818,14 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         past_k_poses = []
         # past k timestamps
         past_k_time_diffs = []
+        # past k sample invervals
+        past_k_sample_interval = []
         
         # past k label 
-        past_k_label_dicts = [] # TODO: 这个部分可以删掉
+        past_k_label_dicts = [] # 这个部分可以删掉
+
+        # 判断点的数量是否合法
+        if_no_point = False
 
         # past k frames [trans matrix], [lidar feature], [pose], [time interval]
         for i in range(self.k):
@@ -668,14 +842,20 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             processed_features = self.pre_processor.preprocess(lidar_np)
             past_k_features.append(processed_features)
 
+            if lidar_np.shape[0] == 0: # 没有点留下
+                if_no_point = True
+
             # 3. pose
             past_k_poses.append(selected_cav_base['past_k'][i]['params']['lidar_pose'])
 
-            # 4. time interval
-            if selected_cav_base['ego']:
-                past_k_time_diffs.append(-i)
-            else:
-                past_k_time_diffs.append(-(self.tau+i))
+            # 4. time interval and sample interval
+            past_k_time_diffs.append(selected_cav_base['past_k'][i]['time_diff'])
+            # if selected_cav_base['ego']:
+            #     past_k_time_diffs.append(-i)
+            # else:
+            #     past_k_time_diffs.append(-(self.tau+i))
+            past_k_sample_interval.append(selected_cav_base['past_k'][i]['sample_interval'])
+
 
             ################################################################
             # sizhewei
@@ -729,7 +909,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
              'past_k_poses': past_k_poses,
              'past_k_features': past_k_features,
              'past_k_time_diffs': past_k_time_diffs,
-             'past_k_label_dicts': past_k_label_dicts
+             'past_k_sample_interval': past_k_sample_interval,
+             'past_k_label_dicts': past_k_label_dicts,
+             'if_no_point': if_no_point
              })
 
         return selected_cav_processed
@@ -773,7 +955,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         if not i==-1:
             return -i
         else:
-            return (int(ts1) - int(ts2))
+            return (float(ts1) - float(ts2))
 
     def merge_past_k_features_to_dict(self, processed_feature_list):
         """
@@ -859,6 +1041,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 list of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
         }
         '''
+        for i in range(len(batch)):
+            if batch[i] is None:
+                return None
         # Intermediate fusion is different the other two
         output_dict = {'ego': {}}
 
@@ -881,6 +1066,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         past_k_label_list = []
         # store the time interval of each feature map
         past_k_time_interval = []
+        past_k_sample_inverval = []
+        past_k_avg_sample_interval = []
         # pairwise transformation matrix
         pairwise_t_matrix_list = []
 
@@ -905,6 +1092,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             curr_lidar_pose_list.append(ego_dict['curr_lidar_poses']) # ego_dict['curr_lidar_pose'] is np.ndarray [N,6]
             past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [N,k,6]
             past_k_time_interval.append(ego_dict['past_k_time_diffs']) # ego_dict['past_k_time_diffs'] is np.array(), len=nxk
+            past_k_sample_inverval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
+            past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
             processed_lidar_list.append(ego_dict['processed_lidar']) # different cav_num, ego_dict['processed_lidar'] is list.
             record_len.append(ego_dict['cav_num'])
             label_dict_list.append(ego_dict['label_dict'])
@@ -927,6 +1116,13 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         # collate past k time interval from different batch, (B, )
         past_k_time_interval = np.hstack(past_k_time_interval)
         past_k_time_interval = torch.from_numpy(past_k_time_interval)
+
+        # collate past k sample interval from different batch, (B, )
+        past_k_sample_inverval = np.hstack(past_k_sample_inverval)
+        past_k_sample_inverval = torch.from_numpy(past_k_sample_inverval)
+
+        past_k_avg_sample_interval = np.array(past_k_avg_sample_interval)
+        avg_sample_interval = sum(past_k_avg_sample_interval) / len(past_k_avg_sample_interval)
 
         # convert to numpy, (B, max_num, 7)
         object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
@@ -977,6 +1173,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                                    'curr_lidar_pose': curr_lidar_pose,
                                    'past_lidar_pose': past_k_lidar_pose,
                                    'past_k_time_interval': past_k_time_interval,
+                                   'past_k_sample_inverval': past_k_sample_inverval,
+                                   'avg_sample_interval': avg_sample_interval,
                                    'times': time_consume})
 
         if self.visualize:
@@ -1149,3 +1347,5 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                         pairwise_t_matrix[i, j] = t_matrix
 
         return pairwise_t_matrix
+
+# if __name__ == '__main__':   

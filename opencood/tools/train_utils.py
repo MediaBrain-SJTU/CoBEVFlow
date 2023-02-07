@@ -27,6 +27,51 @@ def backup_script(full_path, folders_to_save=["models", "data_utils", "utils", "
         source_folder = os.path.join(current_path, f'../{folder_name}')
         shutil.copytree(source_folder, ttarget_folder)
 
+# def load_saved_model(saved_path, model):
+#     """
+#     Load saved model if exiseted
+
+#     Parameters
+#     __________
+#     saved_path : str
+#        model saved path
+#     model : opencood object
+#         The model instance.
+
+#     Returns
+#     -------
+#     model : opencood object
+#         The model instance loaded pretrained params.
+#     """
+#     assert os.path.exists(saved_path), '{} not found'.format(saved_path)
+
+#     def findLastCheckpoint(save_dir):
+#         file_list = glob.glob(os.path.join(save_dir, '*epoch*.pth'))
+#         if file_list:
+#             epochs_exist = []
+#             for file_ in file_list:
+#                 result = re.findall(".*epoch(.*).pth.*", file_)
+#                 epochs_exist.append(int(result[0]))
+#             initial_epoch_ = max(epochs_exist)
+#         else:
+#             initial_epoch_ = 0
+#         return initial_epoch_
+
+#     if os.path.exists(os.path.join(saved_path, 'net_latest.pth')):
+#         model.load_state_dict(torch.load(
+#             os.path.join(saved_path,
+#                          'net_latest.pth')))
+#         return 100, model
+
+#     initial_epoch = findLastCheckpoint(saved_path)
+#     if initial_epoch > 0:
+#         print('resuming by loading epoch %d' % initial_epoch)
+#         model.load_state_dict(torch.load(
+#             os.path.join(saved_path,
+#                          'net_epoch%d.pth' % initial_epoch)), strict=False)
+
+#     return initial_epoch, model
+
 def load_saved_model(saved_path, model):
     """
     Load saved model if exiseted
@@ -57,21 +102,36 @@ def load_saved_model(saved_path, model):
             initial_epoch_ = 0
         return initial_epoch_
 
-    if os.path.exists(os.path.join(saved_path, 'net_latest.pth')):
-        model.load_state_dict(torch.load(
-            os.path.join(saved_path,
-                         'net_latest.pth')))
-        return 100, model
+    file_list = glob.glob(os.path.join(saved_path, 'net_epoch_bestval_at*.pth'))
+    if file_list:
+        assert len(file_list) == 1
+        print("resuming best validation model at epoch %d" % \
+                eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")))
+        model.load_state_dict(torch.load(file_list[0] , map_location='cpu'), strict=False)
+        return eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")), model
 
     initial_epoch = findLastCheckpoint(saved_path)
     if initial_epoch > 0:
         print('resuming by loading epoch %d' % initial_epoch)
         model.load_state_dict(torch.load(
             os.path.join(saved_path,
-                         'net_epoch%d.pth' % initial_epoch)), strict=False)
+                         'net_epoch%d.pth' % initial_epoch), map_location='cpu'), strict=False)
 
+    # ckpt = torch.load(os.path.join(saved_path, 'net_epoch%d.pth' % initial_epoch), map_location='cpu')
+    # keys = [x for x in ckpt if 'resnet' in x]
+    # ckpt_new = {}
+    # for k in keys:
+    #     old_key = k.split('layer')
+    #     start = old_key[0]
+    #     end = old_key[1][1:]
+    #     mid = int(old_key[1][0]) - 1
+    #     new_key = start + 'layer' + str(mid) + end
+    #     ckpt_new[new_key] = ckpt[k]
+    # for k in ckpt:
+    #     if k not in keys:
+    #         ckpt_new[k] = ckpt[k]
+    # model.load_state_dict(ckpt_new, strict=False)
     return initial_epoch, model
-
 
 def setup_train(hypes):
     """

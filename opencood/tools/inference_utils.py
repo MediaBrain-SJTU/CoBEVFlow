@@ -125,6 +125,10 @@ def inference_early_fusion(batch_data, model, dataset):
         dataset.post_process(batch_data,
                              output_dict)
 
+    # return_dict = {"pred_box_tensor" : pred_box_tensor, \
+    #                     "pred_score" : pred_score, \
+    #                     "gt_box_tensor" : gt_box_tensor}
+
     return pred_box_tensor, pred_score, gt_box_tensor
 
 

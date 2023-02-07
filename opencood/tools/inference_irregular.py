@@ -32,7 +32,7 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=5,
+    parser.add_argument('--save_vis_interval', type=int, default=40,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
@@ -104,8 +104,10 @@ def main():
     noise_level = "no_noise"
 
     start_time = time.time()
+    # infer_info = opt.fusion_method + f"{opt.cavnum}agent" + opt.note
     for i, batch_data in tenumerate(data_loader):
-        # print(f"{noise_level}_{i}")
+        # if i % 50 == 0:
+        #     print(f"{noise_level}_{i}")
         if batch_data is None:
             continue
         with torch.no_grad():
@@ -162,8 +164,7 @@ def main():
                     os.makedirs(npy_save_path)
                 inference_utils.save_prediction_gt(pred_box_tensor,
                                                 gt_box_tensor,
-                                                batch_data['ego'][
-                                                    'origin_lidar'][0],
+                                                batch_data['ego']['origin_lidar'][0],
                                                 i,
                                                 npy_save_path)
 
@@ -172,22 +173,20 @@ def main():
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
-                vis_save_path = os.path.join(vis_save_path_root, '3d_%05d.png' % i)
-                simple_vis.visualize(pred_box_tensor,
-                                    gt_box_tensor,
-                                    batch_data['ego'][
-                                        'origin_lidar'][0],
-                                    hypes['postprocess']['gt_range'],
-                                    vis_save_path,
-                                    method='3d',
-                                    left_hand=left_hand,
-                                    uncertainty=uncertainty_tensor)
+                # vis_save_path = os.path.join(vis_save_path_root, '3d_%05d.png' % i)
+                # simple_vis.visualize(pred_box_tensor,
+                #                     gt_box_tensor,
+                #                     batch_data['ego']['origin_lidar'][0],
+                #                     hypes['postprocess']['gt_range'],
+                #                     vis_save_path,
+                #                     method='3d',
+                #                     left_hand=left_hand,
+                #                     uncertainty=uncertainty_tensor)
                 
                 vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d.png' % i)
                 simple_vis.visualize(pred_box_tensor,
                                     gt_box_tensor,
-                                    batch_data['ego'][
-                                        'origin_lidar'][0],
+                                    batch_data['ego']['origin_lidar'][0],
                                     hypes['postprocess']['gt_range'],
                                     vis_save_path,
                                     method='bev',
@@ -197,7 +196,7 @@ def main():
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
     
-    _, ap50, ap70 = eval_utils.eval_final_results(result_stat,
+    ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, noise_level)
     print("Module with time delay: {}".format(hypes['time_delay']))
 

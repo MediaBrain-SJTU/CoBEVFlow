@@ -1,8 +1,12 @@
 name: opv2v_npj_raindrop_attn
 
-root_dir: "/DB/public/OPV2V_w_npy/train/"
-validate_dir: "/DB/public/OPV2V_w_npy/validate"
-test_dir: "/DB/public/OPV2V_w_npy/test"
+# root_dir: "/GPFS/public/OPV2V_irregular_npy/train"
+# validate_dir: "/GPFS/public/OPV2V_irregular_npy/validate"
+# test_dir: "/GPFS/public/OPV2V_irregular_npy/test"
+
+root_dir: "/DB/public/OPV2V_irregular_npy/train/"
+validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
+test_dir: "/DB/public/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False
@@ -13,8 +17,12 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 1
-time_delay: 0
+num_sweep_frames: &past_k 2
+# time_delay: 0
+
+binomial_n: 10
+binomial_p: 0.3
+
 is_single_pre_trained:
   pre_train_flag: false
   # pre_train_fix: true
@@ -25,14 +33,14 @@ comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 2
-  epoches: 30
+  batch_size: &batch_size 2 # TODO: 调整batch_size
+  epoches: 10
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
 
 fusion:
-  core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
+  core_method: 'IntermediateFusionDatasetIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
   args:
     proj_first: false
     clip_pc: false
@@ -142,12 +150,12 @@ model:
         sweep_length: *past_k
         if_spatial_encoding : False
         if_ego_time_encoding : false
-        if_nonego_time_encoding : False
+        if_nonego_time_encoding : true
         if_sensor_encoding : False
-        if_time_attn_aggre : False
+        if_time_attn_aggre : true
         if_spatial_conv : False
-        if_dotproductattn : False
-        use_mask : False
+        if_dotproductattn : True
+        use_mask : True
         confidence_fetch : false
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
@@ -157,7 +165,7 @@ model:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
-        mode: 'RAIN' # MAX or RAIN
+        mode: 'MAX' # MAX or RAIN
       multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
