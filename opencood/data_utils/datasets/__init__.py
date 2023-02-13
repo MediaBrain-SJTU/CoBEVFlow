@@ -19,6 +19,7 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_delay import 
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_multisweep import IntermediateFusionDatasetDAIRMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_multisweep import IntermediateFusionDatasetMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import IntermediateFusionDatasetIrregular
+from opencood.data_utils.datasets.late_fusion_dataset_opv2v_irregular import LateFusionDatasetIrregular
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -36,11 +37,12 @@ __all__ = {
     'IntermediateFusionDatasetV2DAIR': IntermediateFusionDatasetV2DAIR,
     'IntermediateFusionDatasetDAIRAsync': IntermediateFusionDatasetDAIRAsync,
     'IntermediateFusionDatasetMultisweep': IntermediateFusionDatasetMultisweep,
-    'IntermediateFusionDatasetIrregular': IntermediateFusionDatasetIrregular
+    'IntermediateFusionDatasetIrregular': IntermediateFusionDatasetIrregular,
+    'LateFusionDatasetIrregular': LateFusionDatasetIrregular
 }
 
 # the final range for evaluation
-GT_RANGE_OPV2V = [-140, -40, -3, 140, 40, 1]
+GT_RANGE_OPV2V = [-140, -40, -3, 140, 40, 1] #[-140, -40, -3, 140, 40, 1], [-153.6, -51.2, -3, 153.6, 51.2, 1] [-140.8, -38.4, -3, 140.8, 38.4, 1]
 GT_RANGE_V2XSIM = [-32, -32, -3, 32, 32, 1]
 # The communication range for cavs
 COM_RANGE = 70

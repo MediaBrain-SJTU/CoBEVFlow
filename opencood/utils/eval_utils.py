@@ -139,7 +139,7 @@ def calculate_ap(result_stat, iou):
     return ap, mrec, mprec
 
 
-def eval_final_results(result_stat, save_path, noise_level=None):
+def eval_final_results(result_stat, save_path, noise_level=None, avg_time_delay=0.0, avg_sample_interval=0.0, note=''):
     dump_dict = {}
 
     ap_30, mrec_30, mpre_30 = calculate_ap(result_stat, 0.30)
@@ -149,18 +149,23 @@ def eval_final_results(result_stat, save_path, noise_level=None):
     dump_dict.update({'ap_30': ap_30,
                       'ap_50': ap_50,
                       'ap_70': ap_70,
-                      'mpre_50': mpre_50,
-                      'mrec_50': mrec_50,
-                      'mpre_70': mpre_70,
-                      'mrec_70': mrec_70,
+                      'avg_time_delay': avg_time_delay,
+                      'avg_sample_interval': avg_sample_interval,
+                    #   'mpre_50': mpre_50,
+                    #   'mrec_50': mrec_50,
+                    #   'mpre_70': mpre_70,
+                    #   'mrec_70': mrec_70,
                       })
     if noise_level is None:
         yaml_utils.save_yaml(dump_dict, os.path.join(save_path, 'eval.yaml'))
     else:
-        yaml_utils.save_yaml(dump_dict, os.path.join(save_path, f'eval_{noise_level}.yaml'))
+        yaml_utils.save_yaml(dump_dict, os.path.join(save_path, f'eval_{noise_level}_{note}.yaml'))
 
     print('The Average Precision at IOU 0.3 is %.5f, '
           'The Average Precision at IOU 0.5 is %.5f, '
           'The Average Precision at IOU 0.7 is %.5f' % (ap_30, ap_50, ap_70))
+
+    print('=== Avg Time Delay %.2f ==='
+          '=== Avg Sample Interval %.2f ===' % (avg_time_delay, avg_sample_interval))
 
     return ap_30, ap_50, ap_70

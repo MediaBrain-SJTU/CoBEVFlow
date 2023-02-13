@@ -49,14 +49,14 @@ def main():
 
     train_loader = DataLoader(opencood_train_dataset,
                               batch_size=hypes['train_params']['batch_size'],
-                              num_workers=1, # TODO: num_workers改回8
+                              num_workers=8, # TODO: num_workers改回8
                               collate_fn=opencood_train_dataset.collate_batch_train,
-                              shuffle=False, # TODO: shuffle改为True
+                              shuffle=True, #True, # TODO: shuffle改为True
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
                             batch_size=hypes['train_params']['batch_size'],
-                            num_workers=1,  # TODO: num_workers改回8
+                            num_workers=8,  # TODO: num_workers改回8
                             collate_fn=opencood_train_dataset.collate_batch_train,
                             shuffle=True,   # TODO: shuffle改为True
                             pin_memory=True,
@@ -126,7 +126,7 @@ def main():
         saved_path = train_utils.setup_train(hypes)
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer)
 
-    is_fix = True
+    is_fix = False # TODO: pretrain 记得删除
     pretrain_path = "/DB/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26_pretrain"
     initial_epoch = 17
     if is_fix:
@@ -135,7 +135,7 @@ def main():
         print("### Pre-trained loaded successfully! ###".format(os.path.join(opt.model_dir, 'net_epoch%d.pth' % initial_epoch)))
         for name, value in model.named_parameters():
             if name == 'cls_head.weight' or name == 'cls_head.bias':
-                continue# TODO: pretrain 记得删除
+                continue # TODO: pretrain 记得删除
             if name in pre_train_model:
                 value.requires_grad = False
 
@@ -196,8 +196,8 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
-            if i==1: # TODO: debug 用
-                break
+            # if i==1: # TODO: debug 用
+            #     break
             if batch_data is None:
                 continue
             # start_time = time.time()
@@ -218,7 +218,7 @@ def main():
             # start_time = time.time()
 
             batch_data['ego']['epoch'] = epoch
-            sample_interval += batch_data['ego']['avg_sample_interval']
+            # sample_interval += batch_data['ego']['avg_sample_interval'] # TODO: 打开
             ouput_dict = model(batch_data['ego'])
 
             # end_time = time.time()
@@ -233,7 +233,7 @@ def main():
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
             final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
-            if i%2 == 0:
+            if i%10 == 0:
                 criterion.logging(epoch, i, len(train_loader), writer)
 
             # back-propagation
@@ -246,7 +246,7 @@ def main():
 
             torch.cuda.empty_cache()
         
-        sample_interval /= i
+        sample_interval /= i # TODO: 打开
         sample_interval_all_epoch += sample_interval
 
         if epoch % hypes['train_params']['eval_freq'] == 0:
@@ -256,7 +256,7 @@ def main():
             with torch.no_grad():
                 for i, batch_data in enumerate(val_loader):
                     # TODO: debug use
-                    print(i)
+                    # print(i)
                     if i == 10:
                         break
 
@@ -278,7 +278,7 @@ def main():
                                            batch_data['ego']['label_dict'])
                     valid_ave_loss.append(final_loss.item())
                 # TODO: debug use
-                print(illegal_path_list)
+                # print(illegal_path_list)
 
             valid_ave_loss = statistics.mean(valid_ave_loss)
             print('At epoch %d, the validation loss is %f' % (epoch,

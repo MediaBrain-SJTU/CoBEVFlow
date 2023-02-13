@@ -429,7 +429,9 @@ class AttentionFusion(nn.Module):
             ego cav's fused feature at current frame.
         """
 
-        return torch.max(features, dim=0)[0]
+        # return features[0]    # for no fusion inference
+        
+        return torch.max(features, dim=0)[0]    # for max fusion
 
         # ego_features = features[:1].clone()
         # return ego_features[0]
@@ -733,6 +735,8 @@ class raindrop_fuse(nn.Module):
                         #     x_fuse.append(neighbor_feature[0])
                     else: # ATTEN, MAX, Transformer
                         x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                        # x_fuse.append(neighbor_feature[0]) # TODO: for single
+                        # print("=== single feature! ===")
                         # # TODO for scale debug
                         # if i==self.num_levels-1:
                         #     x_fuse.append(self.fuse_modules[i](neighbor_feature))

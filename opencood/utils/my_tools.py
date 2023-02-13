@@ -11,7 +11,7 @@ import os
 import sys
 sys.path.append(os.getcwd())
 import shutil
-import open3d as o3d
+# import open3d as o3d
 import numpy as np
 import time
 import json
@@ -168,38 +168,74 @@ if __name__ == "__main__":
     # to_npy_and_json(split_name='validate')
     # create_small_dataset(split_name='train')
 
-    log_dirs = "/DB/data/sizhewei/logs/opv2v_npj_raindrop_max_multiscale_resnet_d_0_swps_w_resnet_w_multiscale_for_inference_regular_d_"
-    save_path = './opencood/ap_delay_regular.jpg'
-
-    ap_list = []
-    for i in trange(11):
-        log_file = log_dirs + str(i)
-        eval_file = os.path.join(log_file, "eval_no_noise.yaml")
-        tmp_aps = []
-        with open(eval_file, "r", encoding="utf-8") as f:
-            data = yaml.load(f, Loader=yaml.FullLoader)
-        tmp_aps.append(data['ap_30'])
-        tmp_aps.append(data['ap_50'])
-        tmp_aps.append(data['ap_70'])
-
-        ap_list.append(tmp_aps)
-
-    ap_list_np = np.array(ap_list)
-    ap_list_np = np.transpose(ap_list_np)
-
-    delays = list(range(11))
-    ap_30_list = list(ap_list_np[0])
-    ap_50_list = list(ap_list_np[1])
-    ap_70_list = list(ap_list_np[2])
-    plt.plot(delays, ap_30_list, label='ap30')
-    plt.plot(delays, ap_50_list, label='ap50')
-    plt.plot(delays, ap_70_list, label='ap70')
+    root_dirs = "/DB/data/sizhewei/logs"
+    save_path = './opencood/result.jpg'
     
-    plt.axis([0, 11, 0, 1])
-    plt.xlabel('# delay timestamps')
-    plt.ylabel('AP')
-    plt.legend(loc = 'upper right')
+    split_list = ['where2comm_irregular', 'latefusion_irregular']
+    single_split_name = 'single_irregular'
+
+    num_delay = 10
+
+    max_x = 1000 # unit is ms
+    plt.figure()
+    fig, ax = plt.subplots(3,1, sharex='col', sharey=False, figsize=(6,9))
+    fig.text(0.5, 0.06, '# Avg. time delay (ms)', ha='center', fontsize='x-large')
+    fig.text(0.06, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
+    ax30 = ax[0]; ax50 = ax[1]; ax70 = ax[2]
+
+    for split_name in split_list:
+        ap_list = []
+        delays = []
+        for i in trange(num_delay+1):
+            log_file = split_name + '_d_' + str(i)
+            eval_file = os.path.join(root_dirs, log_file, "eval_no_noise_ir_in_ir_gt_update.yaml")
+            tmp_aps = []
+            with open(eval_file, "r", encoding="utf-8") as f:
+                data = yaml.load(f, Loader=yaml.FullLoader)
+            tmp_aps.append(data['ap_30'])
+            tmp_aps.append(data['ap_50'])
+            tmp_aps.append(data['ap_70'])
+            try:
+                delays.append(-data['avg_time_delay'])
+            except:
+                delays.append(i)
+
+            ap_list.append(tmp_aps)
+
+        ap_list_np = np.array(ap_list)
+        ap_list_np = np.transpose(ap_list_np)
+
+        ap_30_list = list(ap_list_np[0])
+        ap_50_list = list(ap_list_np[1])
+        ap_70_list = list(ap_list_np[2])
+        method_name = split_name.split('_')[0]
+
+        color = '#1f77b4' if split_name==split_list[0] else 'g'
+        plt.sca(ax30); plt.plot(delays, ap_30_list, color=color, marker='+', label = method_name + '_' + 'ap30')
+        plt.sca(ax50); plt.plot(delays, ap_50_list, color=color, marker='+', label = method_name + '_' + 'ap50')
+        plt.sca(ax70); plt.plot(delays, ap_70_list, color=color, marker='+', label = method_name + '_' + 'ap70')
+    
+    # for single fusion
+    method_name = single_split_name.split('_')[0]
+    eval_file = os.path.join(root_dirs, single_split_name, 'eval_no_noise_ir_in_ir_gt_update.yaml')
+    with open(eval_file, "r", encoding="utf-8") as f:
+        data = yaml.load(f, Loader=yaml.FullLoader)
+    plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], 'r--', label=method_name + '_' + 'ap30')
+    plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], 'r--', label=method_name + '_' + 'ap50')
+    plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], 'r--', label=method_name + '_' + 'ap70')
+
+    xaxis = np.linspace(0, max_x, 11)
+    ax30.set_title('The Results for AP@0.3'); ax30.grid(True); 
+    ax30.set_xticks(xaxis); \
+        ax30.legend(loc = 'upper right')
+    ax50.set_title('The Results for AP@0.5'); ax50.grid(True); 
+    ax50.set_xticks(xaxis); \
+        ax50.legend(loc = 'upper right')
+    ax70.set_title('The Results for AP@0.7'); ax70.grid(True); 
+    ax70.set_xticks(xaxis); \
+        ax70.legend(loc = 'upper right')
+
     plt.savefig(save_path)
     print("=== Plt save finished!!! ===")
     # plt.title('标题')
-    plt.show()
+    # plt.show()

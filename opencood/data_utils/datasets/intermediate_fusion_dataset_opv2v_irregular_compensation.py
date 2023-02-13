@@ -3,7 +3,10 @@
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 """
-Dataset class for intermediate fusion with past k frames on irregular OPV2V
+Dataset class for intermediate fusion with 
+1) past k frames as input 
+2) current frame as supervision
+on irregular OPV2V
 """
 
 from collections import OrderedDict

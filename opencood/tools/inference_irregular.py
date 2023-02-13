@@ -37,6 +37,7 @@ def test_parser():
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
+    parser.add_argument('--note', default="ir_in_ir_gt_update", type=str, help='save folder name')
     opt = parser.parse_args()
     return opt
 
@@ -105,12 +106,27 @@ def main():
 
     start_time = time.time()
     # infer_info = opt.fusion_method + f"{opt.cavnum}agent" + opt.note
+    i = -1
+    avg_time_delay = 0.0
+    avg_sample_interval = 0.0
     for i, batch_data in tenumerate(data_loader):
-        # if i % 50 == 0:
-        #     print(f"{noise_level}_{i}")
         if batch_data is None:
             continue
+        # if i > 100: # TODO: debug use
+        #     break
         with torch.no_grad():
+            if opt.fusion_method == 'late':
+                unit_time_delay = []
+                unit_sample_interval = []
+                for cav_id, cav_content in batch_data.items():
+                    unit_time_delay.append(cav_content['debug']['time_diff'])
+                    unit_sample_interval.append(cav_content['debug']['sample_interval'])
+                avg_time_delay += (sum(unit_time_delay[1:])/len(unit_time_delay[1:]))
+                avg_sample_interval += (float(sum(unit_sample_interval[1:]))/len(unit_sample_interval[1:]))
+            if opt.fusion_method == 'intermediate':
+                avg_time_delay += batch_data['ego']['avg_time_delay']
+                avg_sample_interval += batch_data['ego']['avg_sample_interval']
+            
             batch_data = train_utils.to_device(batch_data, device)
             uncertainty_tensor = None
             if opt.fusion_method == 'late':
@@ -169,7 +185,7 @@ def main():
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{noise_level}')
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}')
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -183,7 +199,12 @@ def main():
                 #                     left_hand=left_hand,
                 #                     uncertainty=uncertainty_tensor)
                 
-                vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d.png' % i)
+                try:
+                    debug_path = batch_data['ego']['debug']['scene_name'] + '_' + batch_data['ego']['debug']['cav_id'] + '_' + batch_data['ego']['debug']['timestamp']
+                    # print(debug_path)
+                except:
+                    debug_path = 'path'
+                vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d_%s.png' % (i, debug_path))
                 simple_vis.visualize(pred_box_tensor,
                                     gt_box_tensor,
                                     batch_data['ego']['origin_lidar'][0],
@@ -196,10 +217,11 @@ def main():
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
     
+    avg_time_delay = (avg_time_delay/i) * 50 # unit is ms
+    avg_sample_interval /= i
     ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                opt.model_dir, noise_level)
-    print("Module with time delay: {}".format(hypes['time_delay']))
-
+                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note)
+    print("Module with sample interval expection: {}".format(hypes['binomial_n']*hypes['binomial_p']))
 
 
 if __name__ == '__main__':

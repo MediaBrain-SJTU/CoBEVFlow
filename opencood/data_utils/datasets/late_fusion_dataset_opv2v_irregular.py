@@ -1,10 +1,10 @@
-
 # -*- coding: utf-8 -*-
 # Author: sizhewei @ 2023/1/27
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 """
-Dataset class for intermediate fusion with past k frames
+Dataset class for Late fusion with past k frames on irregular OPV2V
+TODO: train 部分因为暂时没有用到 可能存在bug 使用前需要检查
 """
 
 from collections import OrderedDict
@@ -21,7 +21,7 @@ from scipy import stats
 import opencood.data_utils.post_processor as post_processor
 import opencood.utils.pcd_utils as pcd_utils
 from opencood.utils.keypoint_utils import bev_sample, get_keypoints
-from opencood.data_utils.datasets import basedataset
+from opencood.data_utils.datasets import basedataset, intermediate_fusion_dataset_opv2v_irregular
 from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.hypes_yaml.yaml_utils import load_yaml
 from opencood.utils.pcd_utils import \
@@ -34,609 +34,39 @@ from opencood.utils.common_utils import read_json
 from opencood.utils import box_utils
 # from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 
+# from opencood.data_utils.datasets import build_dataset 
 
-class LateFusionDatasetIrregular(basedataset.BaseDataset):
+class LateFusionDatasetIrregular(intermediate_fusion_dataset_opv2v_irregular.IntermediateFusionDatasetIrregular):
     """
-    This class is for intermediate fusion where each vehicle transmit the
-    deep features to ego.
+    This class is for late fusion where each vehicle transmit the
+    detection outputs to ego.
     """
     def __init__(self, params, visualize, train=True):
+        super(LateFusionDatasetIrregular, self).__init__(params, visualize, train)
 
-        self.times = []
-
-        self.params = params
-        self.visualize = visualize
-        self.train = train
-
-        self.pre_processor = None
-        self.post_processor = None
-        self.data_augmentor = DataAugmentor(params['data_augment'],
-                                            train)
-
-        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
-            self.k = params['num_sweep_frames']
-        else:
-            self.k = 0
-
-        if 'time_delay' in params:          # number of time delay
-            self.tau = params['time_delay'] 
-        else:
-            self.tau = 0
-
-        if 'binomial_p' in params:
-            self.binomial_p = params['binomial_p']
-        else:
-            self.binomial_p = 1
-
-        assert 'proj_first' in params['fusion']['args']
-        if params['fusion']['args']['proj_first']:
-            self.proj_first = True
-        else:
-            self.proj_first = False
-
-        if self.train:
-            root_dir = params['root_dir']
-        else:
-            root_dir = params['validate_dir']
-        
-        print("Dataset dir:", root_dir)
-
-        if 'train_params' not in params or\
-                'max_cav' not in params['train_params']:
-            self.max_cav = 5
-        else:
-            self.max_cav = params['train_params']['max_cav']
-
-        # first load all paths of different scenarios
-        scenario_folders = sorted([os.path.join(root_dir, x)
-                                   for x in os.listdir(root_dir) if
-                                   os.path.isdir(os.path.join(root_dir, x))])
-        scenario_folders_name = sorted([x
-                                   for x in os.listdir(root_dir) if
-                                   os.path.isdir(os.path.join(root_dir, x))])
-        '''
-        scenario_database Structure: 
-        {
-            scenario_id : {
-                cav_1 : {
-                    'ego' : true / false , 
-                    timestamp1 : {
-                        yaml: path,
-                        lidar: path, 
-                        cameras: list of path
-                    },
-                    ...
-                },
-                ...
-            }
-        }
-        '''
-        self.scenario_database = OrderedDict()
-        self.len_record = []
-
-        # loop over all scenarios
-        for (i, scenario_folder) in enumerate(scenario_folders):
-            self.scenario_database.update({i: OrderedDict()})
-
-            # copy timestamps npy file
-            timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
-            time_annotations = np.load(timestamps_file)
-
-            # at least 1 cav should show up
-            cav_list = sorted([x 
-                               for x in os.listdir(scenario_folder) if 
-                               os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
-            assert len(cav_list) > 0
-
-            # use the frame number as key, the full path as the values
-            yaml_files = sorted([x
-                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
-                        x.endswith(".json")], 
-                        key=lambda y:float((y.split('/')[-1]).split('.json')[0]))
-            if len(yaml_files)==0:
-                yaml_files = sorted([x 
-                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
-                            x.endswith('.yaml')], key=lambda y:float((y.split('/')[-1]).split('.yaml')[0]))
-
-            start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
-            while(1):
-                time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
-                time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
-                if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
-                    start_timestamp += 1
-                else:
-                    break
-
-            end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
-            if start_timestamp%2 == 0:
-                # even
-                end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
-            else:
-                end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
-            num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
-            regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
-
-            # loop over all CAV data
-            for (j, cav_id) in enumerate(cav_list):
-                if j > self.max_cav - 1:
-                    print('too many cavs')
-                    break
-                self.scenario_database[i][cav_id] = OrderedDict()
-
-                cav_path = os.path.join(scenario_folder, cav_id)
-
-                if j==0: # ego
-                    timestamps = regular_timestamps
-                else:
-                    timestamps = list(time_annotations[j-1, :])
-
-                for timestamp in timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id][timestamp]['lidar'] = \
-                        lidar_file
-                    # self.scenario_database[i][cav_id][timestamp]['camera0'] = \
-                        # camera_files
-                
-                # regular的timestamps 用于做 curr 真实时刻的ground truth
-                self.scenario_database[i][cav_id]['regular'] = OrderedDict()
-                for timestamp in regular_timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id]['regular'][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['lidar'] = \
-                        lidar_file
-
-                # Assume all cavs will have the same timestamps length. Thus
-                # we only need to calculate for the first vehicle in the
-                # scene.
-                if j == 0:  # ego 
-                    # we regard the agent with the minimum id as the ego
-                    self.scenario_database[i][cav_id]['ego'] = True
-                    num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
-                    if not self.len_record:
-                        self.len_record.append(num_ego_timestamps)
-                    else:
-                        prev_last = self.len_record[-1]
-                        self.len_record.append(prev_last + num_ego_timestamps)
-                else:
-                    self.scenario_database[i][cav_id]['ego'] = False
-                    
-
-        # if project first, cav's lidar will first be projected to
-        # the ego's coordinate frame. otherwise, the feature will be
-        # projected instead. 
-        self.pre_processor = build_preprocessor(params['preprocess'],
-                                                train)
-        self.post_processor = post_processor.build_postprocessor(
-            params['postprocess'],
-            train)
-
-        self.anchor_box = self.post_processor.generate_anchor_box()
-
-        print("=== OPV2V-Irregular Multi-sweep dataset with non-ego cavs' {} time delay and past {} frames collected initialized! ### {} ###  samples totally! ===".format(self.tau, self.k, self.len_record[-1]))
-
-    def extract_timestamps(self, yaml_files):
-        """
-        Given the list of the yaml files, extract the mocked timestamps.
-
-        Parameters
-        ----------
-        yaml_files : list
-            The full path of all yaml files of ego vehicle
-
-        Returns
-        -------
-        timestamps : list
-            The list containing timestamps only.
-        """
-        timestamps = []
-
-        for file in yaml_files:
-            res = file.split('/')[-1]
-            if res.endswith('.yaml'):
-                timestamp = res.replace('.yaml', '')
-            elif res.endswith('.json'):
-                timestamp = res.replace('.json', '')
-            else:
-                print("Woops! There is no processing method for file {}".format(res))
-                sys.exit(1)
-            timestamps.append(timestamp)
-
-        return timestamps
-
-    def retrieve_base_data(self, idx):
-        """
-        Given the index, return the corresponding data.
-
-        Parameters
-        ----------
-        idx : int
-            Index given by dataloader.
-
-        Returns
-        -------
-        data : dict
-            The dictionary contains loaded yaml params and lidar data for
-            each cav.
-            Structure: 
-            {
-                cav_id_1 : {
-                    'ego' : true,
-                    curr : {		(id)			#      |       | label
-                        'params': (yaml),
-                        'lidar_np': (numpy),
-                        'timestamp': string
-                    },
-                    past_k : {		# (k) totally
-                        [0]:{		(id)			# pose | lidar | label
-                            'params': (yaml),
-                            'lidar_np': (numpy),
-                            'timestamp': string
-                        },
-                        [1] : {},	(id-1)			# pose | lidar | label
-                        ...,						# pose | lidar | label
-                        [k-1] : {} (id-(k-1))		# pose | lidar | label
-                    }
-                    
-                }, 
-                cav_id_2 : {
-                    'ego': false, 
-                    curr : 	{		(id)			#      |       | label
-                            'params': (yaml),
-                            'lidar_np': (numpy),
-                            'timestamp': string
-                    },
-                    past_k: {		# (k) totally
-                        [0] : {		(id - \tau)		# pose | lidar | label
-                            'params': (yaml),
-                            'lidar_np': (numpy),
-                            'timestamp': string
-                        }			
-                        ..., 						# pose | lidar | label
-                        [k-1]:{}  (id-\tau-(k-1))	# pose | lidar | label
-                    },
-                }, 
-                ...
-            }
-        """
-        # we loop the accumulated length list to get the scenario index
-        scenario_index = 0
-        for i, ele in enumerate(self.len_record):
-            if idx < ele:
-                scenario_index = i
-                break
-        scenario_database = self.scenario_database[scenario_index]
-
-        debug_times = np.zeros((3,))
-        start_time = time.time()
-        
-        p = self.binomial_p
-        # 生成冻结分布函数
-        bernoulliDist = stats.bernoulli(p) 
-
-        data = OrderedDict()
-        # load files for all CAVs
-        for cav_id, cav_content in scenario_database.items():
-            '''
-            cav_content 
-            {
-                timestamp_1 : {
-                    yaml: path,
-                    lidar: path, 
-                    cameras: list of path
-                },
-                ...
-                timestamp_n : {
-                    yaml: path,
-                    lidar: path, 
-                    cameras: list of path
-                },
-                'regular' : {},
-                'ego' : true / false , 
-            },
-            '''
-            data[cav_id] = OrderedDict()
-            data[cav_id]['ego'] = cav_content['ego']
-            data[cav_id]['past_k'] = OrderedDict()
-            
-            # current frame, for co-perception lable use
-            data[cav_id]['curr'] = {}
-            timestamp_index = idx if scenario_index == 0 else \
-                        idx - self.len_record[scenario_index - 1]
-            timestamp_index = timestamp_index + self.tau + self.k - 1
-            timestamp_key = list(cav_content['regular'].items())[timestamp_index][0]
-            
-            time_s = time.time()
-            # load param file: json is faster than yaml
-            json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
-            if os.path.exists(json_file):
-                with open(json_file, "r") as f:
-                    data[cav_id]['curr']['params'] = json.load(f)
-            else:
-                data[cav_id]['curr']['params'] = \
-                        load_yaml(cav_content['regular'][timestamp_key]['yaml'])
-            # 没有 lidar pose
-            if not ('lidar_pose' in data[cav_id]['curr']['params']):
-                tmp_ego_pose = np.array(data[cav_id]['curr']['params']['true_ego_pos'])
-                tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
-                data[cav_id]['curr']['params']['lidar_pose'] = list(tmp_ego_pose)
-            
-            time_e = time.time()
-            debug_times[0] += (time_e - time_s)
-
-            time_s = time.time()
-            # load lidar file: npy is faster than pcd
-            npy_file = cav_content['regular'][timestamp_key]['lidar'].replace("pcd", "npy")
-            if os.path.exists(npy_file):
-                data[cav_id]['curr']['lidar_np'] = np.load(npy_file)
-            else:
-                data[cav_id]['curr']['lidar_np'] = \
-                        pcd_utils.pcd_to_np(cav_content['regular'][timestamp_key]['lidar'])
-            time_e = time.time()
-            debug_times[1] += (time_e - time_s)
-
-            data[cav_id]['curr']['timestamp'] = \
-                    timestamp_key
-            data[cav_id]['curr']['time_diff'] = 0
-
-            # past k frames, pose | lidar | label(for single view confidence map generator use)
-            if data[cav_id]['ego']:
-                temp = self.tau
-            else:
-                temp = 0
-
-            # 模拟 k 次伯努利实验
-            trails = bernoulliDist.rvs(self.k)
-            #  and trails[i]==1
-            for i in range(self.k):
-                # check the timestamp index
-                data[cav_id]['past_k'][i] = OrderedDict()
-                timestamp_index = idx if scenario_index == 0 else \
-                    idx - self.len_record[scenario_index - 1]
-                timestamp_index = timestamp_index + self.k - 1 - i + temp
-                timestamp_key = list(cav_content.items())[timestamp_index][0]
-                # load the corresponding data into the dictionary
-                time_s = time.time()
-                # load param file: json is faster than yaml
-                json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
-                if os.path.exists(json_file):
-                    with open(json_file, "r") as f:
-                        data[cav_id]['past_k'][i]['params'] = json.load(f)
-                else:
-                    data[cav_id]['past_k'][i]['params'] = \
-                        load_yaml(cav_content[timestamp_key]['yaml'])
-                # 没有 lidar pose
-                if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
-                    tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
-                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
-                    data[cav_id]['past_k'][i]['params']['lidar_pose'] = list(tmp_ego_pose)
-                time_e = time.time()
-                debug_times[0] += (time_e - time_s)
-
-                time_s = time.time()
-                # load lidar file: npy is faster than pcd
-                npy_file = cav_content[timestamp_key]['lidar'].replace("pcd", "npy")
-                if os.path.exists(npy_file):
-                    data[cav_id]['past_k'][i]['lidar_np'] = np.load(npy_file)
-                else:
-                    data[cav_id]['past_k'][i]['lidar_np'] = \
-                            pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
-                time_e = time.time()
-                debug_times[1] += (time_e - time_s)
-
-                data[cav_id]['past_k'][i]['timestamp'] = \
-                    timestamp_key
-                data[cav_id]['past_k'][i]['time_diff'] = \
-                    self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp'])
-
-        end_time = time.time()
-
-        debug_times[2] += (end_time - start_time)
-
-        return data, debug_times
+        print("=== OPV2V-Irregular Multi-sweep dataset for late fusion with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
 
     def __getitem__(self, idx):
         '''
         Returns:
         ------ 
         {
-            'single_object_dict_stack': single_label_dict_stack,
-            'object_bbx_center': object_bbx_center,
-            'object_bbx_mask': mask,
-            'object_ids': [object_id_stack[i] for i in unique_indices],
-            'anchor_box': anchor_box,
-            'processed_lidar': merged_feature_dict,
-            'label_dict': label_dict,
-            'cav_num': cav_num,
-            'pairwise_t_matrix': pairwise_t_matrix,
-            'curr_lidar_poses': curr_lidar_poses,
-            'past_k_lidar_poses': past_k_lidar_poses,
-            'sample_idx': idx,
-            'cav_id_list': cav_id_list,
-            'past_k_time_diffs': past_k_time_diffs_stack, 
-                np.array of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
+            # if train 
+            # if test
+
         }
         '''
-        base_data_dict, _ = self.retrieve_base_data(idx)
+        # # debug use TODO:
+        # if idx < 170 or idx > 270:
+        #     return None
+        base_data_dict = self.retrieve_base_data(idx)
         
         if self.train:
             reformat_data_dict = self.get_item_train(base_data_dict)
         else:
-            reformat_data_dict = self.get_item_test(base_data_dict, idx)
+            reformat_data_dict = self.get_item_test(base_data_dict)
 
         return reformat_data_dict
-
-        selected_cav_processed = self.get_item_single_car()
-
-        single_label_dict_stack = []
-        object_stack = []
-        object_id_stack = []
-        curr_pose_stack = []
-        curr_feature_stack = []
-        past_k_pose_stack = []
-        past_k_features_stack = [] 
-        past_k_time_diffs_stack = []
-        past_k_tr_mats = []
-        past_k_label_dicts_stack = []
-
-        if self.visualize:
-            projected_lidar_stack = []
-        
-        self.times.append(time.time())
-        
-        for cav_id in cav_id_list:
-            selected_cav_base = base_data_dict[cav_id]
-            '''
-            selected_cav_processed : dict
-            The dictionary contains the cav's processed information.
-            {
-                'single_label_dict':	# single view label
-                'object_bbx_center':	# ego view label. np.ndarray. Shape is (max_num, 7)
-                'object_ids':			# ego view label index. list. length is (max_num, 7)
-                'curr_pose':			# current pose, list, len = 6
-                'past_k_poses': 		# list of past k frames' poses
-                'past_k_features': 		# list of past k frames' lidar
-                'past_k_time_diffs': 	# list of past k frames' time diff with current frame
-                'past_k_tr_mats': 		# list of past k frames' transformation matrix to current ego coordinate
-                'past_k_label_dicts'    # [], [TBD] list of past k frames' label dict 
-            }
-            '''
-            selected_cav_processed = self.get_item_single_car(
-                selected_cav_base,
-                ego_lidar_pose, 
-                idx
-            )
-
-            if self.visualize:
-                projected_lidar_stack.append(
-                    selected_cav_processed['projected_lidar'])
-            
-            # single view feature
-            curr_feature_stack.append(selected_cav_processed['curr_feature'])
-            # single view label
-            single_label_dict_stack.append(selected_cav_processed['single_label_dict'])
-
-            # curr ego view label
-            object_stack.append(selected_cav_processed['object_bbx_center'])
-            object_id_stack += selected_cav_processed['object_ids']
-
-            # current pose: N, 6
-            curr_pose_stack.append(selected_cav_processed['curr_pose']) 
-            # features: N, k, 
-            past_k_features_stack.append(selected_cav_processed['past_k_features'])
-            # poses: N, k, 6
-            past_k_pose_stack.append(selected_cav_processed['past_k_poses'])
-            # time differences: N, k
-            past_k_time_diffs_stack += selected_cav_processed['past_k_time_diffs']
-            # past k frames to ego pose trans matrix, list of len=N, past_k_tr_mats[i]: ndarray(k, 4, 4)
-            past_k_tr_mats.append(selected_cav_processed['past_k_tr_mats'])
-            # past k label dict: N, k, object_num, 7
-            # past_k_label_dicts_stack.append(selected_cav_processed['past_k_label_dicts'])
-        # {pos: array[num_cav, k, 100, 252, 2], neg: array[num_cav, k, 100, 252, 2], target: array[num_cav, k, 100, 252, 2]}
-        # past_k_label_dicts = self.post_processor.merge_label_to_dict(past_k_label_dicts_stack)
-
-        self.times.append(time.time())
-
-        merged_curr_feature_dict = self.merge_features_to_dict(curr_feature_stack)
-        
-        single_label_dict = self.post_processor.collate_batch(single_label_dict_stack)
-
-        past_k_time_diffs_stack = np.array(past_k_time_diffs_stack)
-
-        self.times.append(time.time())
-
-        ########## Added by Yifan Lu 2022.4.5 ################
-        # filter those out of communicate range
-        # then we can calculate get_pairwise_transformation
-        for cav_id in too_far:
-            base_data_dict.pop(cav_id)
-        
-        pairwise_t_matrix = \
-            self.get_past_k_pairwise_transformation2ego(base_data_dict, 
-            ego_lidar_pose, self.max_cav) # np.tile(np.eye(4), (max_cav, self.k, 1, 1)) (L, k, 4, 4)
-
-        curr_lidar_poses = np.array(curr_pose_stack).reshape(-1, 6)  # (N_cav, 6)
-        past_k_lidar_poses = np.array(past_k_pose_stack).reshape(-1, self.k, 6)  # (N, k, 6)
-
-        # exclude all repetitive objects    
-        unique_indices = \
-            [object_id_stack.index(x) for x in set(object_id_stack)]
-        object_stack = np.vstack(object_stack)
-        object_stack = object_stack[unique_indices]
-
-        # make sure bounding boxes across all frames have the same number
-        object_bbx_center = \
-            np.zeros((self.params['postprocess']['max_num'], 7))
-        mask = np.zeros(self.params['postprocess']['max_num'])
-        object_bbx_center[:object_stack.shape[0], :] = object_stack
-        mask[:object_stack.shape[0]] = 1
-
-        self.times.append(time.time())
-
-        # merge preprocessed features from different cavs into the same dict
-        cav_num = len(cav_id_list)
-        # past_k_features_stack: list, len is num_cav. [i] is list, len is k. [cav_id][time_id] is Orderdict, {'voxel_features': array, ...}
-        merged_feature_dict = self.merge_past_k_features_to_dict(past_k_features_stack)
-
-        # generate the anchor boxes
-        anchor_box = self.anchor_box
-
-        # generate targets label
-        label_dict = \
-            self.post_processor.generate_label(
-                gt_box_center=object_bbx_center,
-                anchors=anchor_box,
-                mask=mask)
-
-        self.times.append(time.time())
-
-        self.times = (np.array(self.times[1:]) - np.array(self.times[:-1]))
-
-        self.times = np.hstack((self.times, time4data))
-
-        processed_data_dict['ego'].update(
-            {'single_object_dict_stack': single_label_dict,
-             'curr_processed_lidar': merged_curr_feature_dict,
-             'object_bbx_center': object_bbx_center,
-             'object_bbx_mask': mask,
-             'object_ids': [object_id_stack[i] for i in unique_indices],
-             'anchor_box': anchor_box,
-             'processed_lidar': merged_feature_dict,
-             'label_dict': label_dict,
-             'cav_num': cav_num,
-             'pairwise_t_matrix': pairwise_t_matrix,
-             'curr_lidar_poses': curr_lidar_poses,
-             'past_k_lidar_poses': past_k_lidar_poses,
-             'past_k_time_diffs': past_k_time_diffs_stack,
-             'times': self.times})
-
-        processed_data_dict['ego'].update({'sample_idx': idx,
-                                            'cav_id_list': cav_id_list})
-        if self.visualize:
-            processed_data_dict['ego'].update({'origin_lidar':
-                np.vstack(projected_lidar_stack)})
-
-        return processed_data_dict
 
     def get_item_train(self, base_data_dict):
         processed_data_dict = OrderedDict()
@@ -654,6 +84,319 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
         processed_data_dict.update({'ego': selected_cav_processed})
 
         return processed_data_dict
+
+    def get_item_test(self, base_data_dict):
+        ''' 
+        Fetch useful info from base_data_dict, filter out too far cav.
+        Return a dict match the point_pillar model.
+        
+        Params:
+        ------
+        base_data_dict : dict
+            The dictionary contains loaded yaml params and lidar data for
+            each cav.
+            Structure: 
+            {
+                cav_id_1 : {
+                    'ego' : true,
+                    curr : {		(id)			#      |       | label
+                        'params': (yaml),
+                        'lidar_np': (numpy),
+                        'timestamp': string
+                    },
+                    past_k : {		# (k) totally
+                        [0]:{		(id)			# pose | lidar | label
+                            'params': (yaml),
+                            'lidar_np': (numpy),
+                            'timestamp': string,
+                            'time_diff': float,
+                            'sample_interval': int
+                        },
+                        [1] : {},	(id-1)			# pose | lidar | label
+                        ...,						# pose | lidar | label
+                        [k-1] : {} (id-(k-1))		# pose | lidar | label
+                    },
+                    'debug' : {                     # debug use
+                        scene_name : string         
+                        cav_id : string
+                    }
+                    
+                }, 
+                cav_id_2 : {
+                    'ego': false, 
+                    curr : 	{		(id)			#      |       | label
+                            'params': (yaml),
+                            'lidar_np': (numpy),
+                            'timestamp': string
+                    },
+                    past_k: {		# (k) totally
+                        [0] : {		(id - \tau)		# pose | lidar | label
+                            'params': (yaml),
+                            'lidar_np': (numpy),
+                            'timestamp': string,
+                            'time_diff': float,
+                            'sample_interval': int
+                        }			
+                        ..., 						# pose | lidar | label
+                        [k-1]:{}  (id-\tau-(k-1))	# pose | lidar | label
+                    },
+                }, 
+                ...
+            }
+
+        Returns:
+        ------ 
+        {
+            'ego' : {
+                'transformation_matrix_curr':
+                'transformation_matrix_past': 
+                'if_no_point' : True ,
+                'debug' : {
+                    'scene_name' : string,
+                    'cav_id' : string,
+                    'time_diff': float (0.0 if 'ego'),
+                    'sample_interval': int (0 if 'ego')
+                },
+                'past_k' : {
+                    'origin_lidar' : 
+                    'processed_lidar' : 
+                    'anchor_box' : 
+                    'object_bbx_center' : 
+                    'object_bbx_mask' : 
+                    'object_ids' : 
+                    'label_dict' : 
+                },
+                'curr' : { ... }
+            },
+            cav_id: { ... }     
+        }
+        '''
+        processed_data_dict = OrderedDict()
+
+        # first find the ego vehicle's lidar pose
+        ego_id = -1
+        ego_lidar_pose = []
+        for cav_id, cav_content in base_data_dict.items():
+            if cav_content['ego']:
+                ego_id = cav_id
+                ego_lidar_pose = cav_content['curr']['params']['lidar_pose']
+                break	
+        assert cav_id == list(base_data_dict.keys())[
+            0], "The first element in the OrderedDict must be ego"
+        assert ego_id != -1
+        assert len(ego_lidar_pose) > 0
+
+        # scene_name = base_data_dict[ego_id]['debug']['scene_name']
+        
+        too_far = []
+        cav_id_list = []
+
+        # loop over all CAVs to process information
+        for cav_id, selected_cav_base in base_data_dict.items():
+            # check if the cav is within the communication range with ego
+            # for non-ego cav, we use the latest frame's pose
+            distance = \
+                math.sqrt( \
+                    (selected_cav_base['past_k'][0]['params']['lidar_pose'][0] - ego_lidar_pose[0]) ** 2 + \
+                    (selected_cav_base['past_k'][0]['params']['lidar_pose'][1] - ego_lidar_pose[1]) ** 2)
+            # if distance is too far, we will just skip this agent
+            if distance > self.params['comm_range']:
+                too_far.append(cav_id)
+                continue
+            cav_id_list.append(cav_id)  
+        # filter those out of communicate range
+        for cav_id in too_far:
+            base_data_dict.pop(cav_id)
+
+        if self.visualize:
+            projected_lidar_stack = []
+
+        illegal_cav = []
+        for cav_id in cav_id_list:
+            selected_cav_base = base_data_dict[cav_id]
+
+            selected_cav_processed = self.get_item_single_car_test(
+                selected_cav_base
+            )
+            '''
+            selected_cav_processed : {
+                'if_no_point' : False / True ,
+                'debug' : {
+                    'scene_name' : string,
+                    'cav_id' : string,
+                    'time_diff': float (0.0 if 'ego'),
+                    'sample_interval': int (0 if 'ego')
+                },
+                'past_k' : {
+                    'origin_lidar' : 
+                    'processed_lidar' : 
+                    'anchor_box' : 
+                    'object_bbx_center' : 
+                    'object_bbx_mask' : 
+                    'object_ids' : 
+                    'label_dict' : 
+                },
+                'curr' : {}
+            }
+            '''
+
+            if selected_cav_processed['if_no_point']: # 把点的数量不合法的车排除
+                illegal_cav.append(cav_id)
+                # # 把出现不合法sample的 场景、车辆、时刻 记录下来:
+                # illegal_path = os.path.join(base_data_dict[cav_id]['debug']['scene'], cav_id, base_data_dict[cav_id]['past_k'][0]['timestamp']+'.npy')
+                # illegal_path_list.add(illegal_path)
+                # print(illegal_path)
+                continue
+            
+            cav_lidar_pose_past = selected_cav_base['past_k'][0]['params']['lidar_pose']
+            transformation_matrix_past = x1_to_x2(cav_lidar_pose_past, ego_lidar_pose)
+            selected_cav_processed.update({'transformation_matrix_past': transformation_matrix_past})
+
+            cav_lidar_pose_curr = selected_cav_base['curr']['params']['lidar_pose']
+            transformation_matrix_curr = x1_to_x2(cav_lidar_pose_curr, ego_lidar_pose)
+            selected_cav_processed.update({'transformation_matrix_curr': transformation_matrix_curr})
+            
+            update_cav = "ego" if cav_id == ego_id else cav_id
+            processed_data_dict.update({update_cav: selected_cav_processed})
+        
+        return processed_data_dict
+
+    def get_item_single_car_test(self, selected_cav_base):
+        """
+        Process a single CAV's information for the train/test pipeline.
+
+        Parameters
+        ----------
+        selected_cav_base : dict
+            The dictionary contains a single CAV's raw information.
+            Structure : {
+                'ego' : true,
+                curr : {		(id)			#      |       | label
+                    'params': (yaml),
+                    'lidar_np': (numpy),
+                    'timestamp': string
+                },
+                past_k : {		# (k) totally
+                    [0]:{		(id)			# pose | lidar | label
+                        'params': (yaml),
+                        'lidar_np': (numpy),
+                        'timestamp': string,
+                        'time_diff': float,
+                        'sample_interval': int
+                    },
+                    [1] : {},	(id-1)			# pose | lidar | label
+                    ...,						# pose | lidar | label
+                    [k-1] : {} (id-(k-1))		# pose | lidar | label
+                },
+                'debug' : {                     # debug use
+                    scene_name : string         
+                    cav_id : string
+                }    
+            }
+
+        Returns
+        -------
+        selected_cav_processed : dict
+            The dictionary contains the cav's processed information.
+            Structure : {
+                'if_no_point' : False / True ,
+                'debug' : {
+                    'scene_name' : string,
+                    'cav_id' : string,
+                    'time_diff': float (0.0 if 'ego'),
+                    'sample_interval': int (0 if 'ego'),
+                    'timestamp' : string ('past_k'-0-timestamp)
+                },
+                'past_k' : {
+                    'origin_lidar' : 
+                    'processed_lidar' : 
+                    'anchor_box' : 
+                    'object_bbx_center' : 
+                    'object_bbx_mask' : 
+                    'object_ids' : 
+                    'label_dict' : 
+                },
+                'curr' : {
+                    'origin_lidar' : 
+                    'processed_lidar' : 
+                    'anchor_box' : 
+                    'object_bbx_center' : 
+                    'object_bbx_mask' : 
+                    'object_ids' : 
+                    'label_dict' : 
+                }
+            }
+        """
+        selected_cav_processed = {}
+
+        if_no_point = False
+        # for past: lidar | feature | pose | label
+        for part in ['past_k', 'curr']:
+            processed_part = {}
+            if part=='past_k':
+                processing_base = selected_cav_base['past_k'][0]
+            else:
+                processing_base = selected_cav_base['curr']
+
+            # filter lidar
+            lidar_np = processing_base['lidar_np']
+            lidar_np = shuffle_points(lidar_np)
+            lidar_np = mask_points_by_range(lidar_np,
+                                            self.params['preprocess'][
+                                                'cav_lidar_range'])
+            # remove points that hit ego vehicle
+            lidar_np = mask_ego_points(lidar_np)
+            
+            # tag illegal situation
+            if lidar_np.shape[0] == 0: # 没有点留下
+                selected_cav_processed.update({'if_no_point': True})
+                return selected_cav_processed
+
+            # generate the bounding box(n, 7) under the cav's space
+            object_bbx_center, object_bbx_mask, object_ids = \
+                self.generate_object_center([processing_base], processing_base['params']['lidar_pose'])  
+
+            # data augmentation
+            lidar_np, object_bbx_center, object_bbx_mask = \
+                self.augment(lidar_np, object_bbx_center, object_bbx_mask) # TODO: check
+
+            if self.visualize:
+                processed_part.update({'origin_lidar': lidar_np})
+
+            # pre-process the lidar to voxel/bev/downsampled lidar
+            lidar_dict = self.pre_processor.preprocess(lidar_np)
+            processed_part.update({'processed_lidar': lidar_dict})
+
+            # generate the anchor boxes
+            anchor_box = self.post_processor.generate_anchor_box()
+            processed_part.update({'anchor_box': anchor_box})
+
+            processed_part.update({'object_bbx_center': object_bbx_center,
+                                        'object_bbx_mask': object_bbx_mask,
+                                        'object_ids': object_ids})
+
+            # generate targets label
+            label_dict = \
+                self.post_processor.generate_label(
+                    gt_box_center=object_bbx_center,
+                    anchors=anchor_box,
+                    mask=object_bbx_mask)
+            
+            processed_part.update({'label_dict': label_dict})
+
+            selected_cav_processed.update({part : processed_part})
+ 
+        debug_part = {}
+        # print(selected_cav_base['debug'])
+        debug_part.update({'time_diff': selected_cav_base['past_k'][0]['time_diff'], 
+                            'sample_interval': selected_cav_base['past_k'][0]['sample_interval'],
+                            'scene_name': selected_cav_base['debug']['scene'],
+                            'cav_id': selected_cav_base['debug']['cav_id'],
+                            'timestamp': selected_cav_base['past_k'][0]['timestamp']})
+        selected_cav_processed.update({'if_no_point': if_no_point,
+                                        'debug': debug_part})
+
+        return selected_cav_processed
 
     def get_item_single_car(self, selected_cav_base, idx=-1):
         """
@@ -692,7 +435,7 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
             The dictionary contains the cav's processed information.
             {
                 single_label_dict:		# single view label
-                curr_feature:         # curr_feature,
+                curr_feature:           # curr_feature,
                 object_bbx_center:		# ego view label. np.ndarray. Shape is (max_num, 7)
                 object_ids:				# ego view label index. list. length is (max_num, 7)
                 'curr_pose':			# current pose, list, len = 6
@@ -721,9 +464,14 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
         past_k_poses = []
         # past k timestamps
         past_k_time_diffs = []
+        # past k sample invervals
+        past_k_sample_interval = []
         
         # past k label 
         past_k_label_dicts = [] # todo 这个部分可以删掉
+
+        # 判断点的数量是否合法
+        if_no_point = False
 
         # past k frames [trans matrix], [lidar feature], [pose], [time interval]
         for i in range(self.k):
@@ -740,11 +488,15 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
             processed_features = self.pre_processor.preprocess(lidar_np)
             past_k_features.append(processed_features)
 
+            if lidar_np.shape[0] == 0: # 没有点留下
+                if_no_point = True
+            
             # 3. pose
             past_k_poses.append(selected_cav_base['past_k'][i]['params']['lidar_pose'])
 
-            # 4. time interval
+            # 4. time interval and sample interval
             past_k_time_diffs.append(selected_cav_base['past_k'][i]['time_diff'])
+            past_k_sample_interval.append(selected_cav_base['past_k'][i]['sample_interval'])
 
         # past_k_tr_mats = np.stack(past_k_tr_mats, axis=0) # (k, 4, 4)
 
@@ -760,9 +512,9 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
             )
         selected_cav_processed.update({})
         
-        # curr label at ego view
-        object_bbx_center, object_bbx_mask, object_ids = \
-            self.generate_object_center([selected_cav_base['curr']], ego_pose)
+        # # curr label at ego view
+        # object_bbx_center, object_bbx_mask, object_ids = \
+        #     self.generate_object_center([selected_cav_base['curr']], ego_pose)
             
         selected_cav_processed.update(
             {"single_label_dict": label_dict,
@@ -774,51 +526,12 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
              'past_k_poses': past_k_poses,
              'past_k_features': past_k_features,
              'past_k_time_diffs': past_k_time_diffs,
-             'past_k_label_dicts': past_k_label_dicts
+             'past_k_sample_interval': past_k_sample_interval,
+             'past_k_label_dicts': past_k_label_dicts,
+             'if_no_point': if_no_point
              })
 
         return selected_cav_processed
-
-    @staticmethod
-    def return_timestamp_key_async(cav_content, timestamp_index):
-        """
-        Given the timestamp index, return the correct timestamp key, e.g.
-        2 --> '000078'.
-
-        Parameters
-        ----------
-        scenario_database : OrderedDict
-            The dictionary contains all contents in the current scenario.
-
-        timestamp_index : int
-            The index for timestamp.
-
-        Returns
-        -------
-        timestamp_key : str
-            The timestamp key saved in the cav dictionary.
-        """
-        # retrieve the correct index
-        timestamp_key = list(cav_content.items())[timestamp_index][0]
-
-        return timestamp_key
-
-    @staticmethod
-    def dist_time(ts1, ts2, i = -1):
-        """caculate the time interval between two timestamps
-
-        Args:
-            ts1 (string): time stamp at some time
-            ts2 (string): current time stamp
-            i (int, optional): past frame id, for debug use. Defaults to -1.
-        
-        Returns:
-            time_diff (float): time interval (ts1 - ts2)
-        """
-        if not i==-1:
-            return -i
-        else:
-            return (float(ts1) - float(ts2))
 
     def merge_past_k_features_to_dict(self, processed_feature_list):
         """
@@ -904,6 +617,9 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
                 list of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
         }
         '''
+        for i in range(len(batch)):
+            if batch[i] is None:
+                return None
         # Intermediate fusion is different the other two
         output_dict = {'ego': {}}
 
@@ -926,6 +642,8 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
         past_k_label_list = []
         # store the time interval of each feature map
         past_k_time_interval = []
+        past_k_sample_inverval = []
+        past_k_avg_sample_interval = []
         # pairwise transformation matrix
         pairwise_t_matrix_list = []
 
@@ -950,6 +668,8 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
             curr_lidar_pose_list.append(ego_dict['curr_lidar_poses']) # ego_dict['curr_lidar_pose'] is np.ndarray [N,6]
             past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [N,k,6]
             past_k_time_interval.append(ego_dict['past_k_time_diffs']) # ego_dict['past_k_time_diffs'] is np.array(), len=nxk
+            past_k_sample_inverval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
+            past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
             processed_lidar_list.append(ego_dict['processed_lidar']) # different cav_num, ego_dict['processed_lidar'] is list.
             record_len.append(ego_dict['cav_num'])
             label_dict_list.append(ego_dict['label_dict'])
@@ -972,6 +692,13 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
         # collate past k time interval from different batch, (B, )
         past_k_time_interval = np.hstack(past_k_time_interval)
         past_k_time_interval = torch.from_numpy(past_k_time_interval)
+
+        # collate past k sample interval from different batch, (B, )
+        past_k_sample_inverval = np.hstack(past_k_sample_inverval)
+        past_k_sample_inverval = torch.from_numpy(past_k_sample_inverval)
+
+        past_k_avg_sample_interval = np.array(past_k_avg_sample_interval)
+        avg_sample_interval = sum(past_k_avg_sample_interval) / len(past_k_avg_sample_interval)
 
         # convert to numpy, (B, max_num, 7)
         object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
@@ -1022,6 +749,8 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
                                    'curr_lidar_pose': curr_lidar_pose,
                                    'past_lidar_pose': past_k_lidar_pose,
                                    'past_k_time_interval': past_k_time_interval,
+                                   'past_k_sample_inverval': past_k_sample_inverval,
+                                   'avg_sample_interval': avg_sample_interval,
                                    'times': time_consume})
 
         if self.visualize:
@@ -1037,40 +766,158 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
         return output_dict
 
     def collate_batch_test(self, batch):
-        assert len(batch) <= 1, "Batch size 1 is required during testing!"
-        output_dict = self.collate_batch_train(batch)
-        if output_dict is None:
+        """
+        Parameters:
+        -----------
+        batch: list, len = batch_size
+        [0] : {
+            'ego' : {
+                'transformation_matrix_curr':               cav['curr'] to ego['curr']
+                'transformation_matrix_past':               cav['past'][0] to ego['curr']
+                'if_no_point' : True ,
+                'debug' : {
+                    'scene_name' : string,
+                    'cav_id' : string,
+                    'time_diff': float (0.0 if 'ego'),
+                    'sample_interval': int (0 if 'ego')
+                },
+                'past_k' : {
+                    'origin_lidar' : 
+                    'processed_lidar' : 
+                    'anchor_box' : 
+                    'object_bbx_center' : 
+                    'object_bbx_mask' : 
+                    'object_ids' : 
+                    'label_dict' : 
+                },
+                'curr' : { ... }
+            },
+            cav_id: { ... }        
+        } 
+
+        Returns:
+        ------
+        Structure: {
+            'ego' / cav_id : {
+                'anchor_box' : ,
+                'object_bbx_center':                    curr,
+                'object_bbx_mask':                      curr,
+                'processed_lidar':                      past_k 0 ,
+                'label_dict':                           curr,
+                'object_ids':                           curr,
+                'transformation_matrix':                cav-past to ego-curr,
+                'transformation_matrix_clean':          cav-curr to ego-curr,
+                'debug' : {
+                    'scene_name' : string,
+                    'cav_id' : string,
+                    'time_diff': float (0.0 if 'ego'),
+                    'sample_interval': int (0 if 'ego')
+                },
+                'origin_lidar' :                        cav-curr in ego view
+            },
+            cav_id : { ... }
+        }
+        """
+        if batch[0] is None:
             return None
+        # currently, we only support batch size of 1 during testing
+        assert len(batch) <= 1, "Batch size 1 is required during testing!"
+        batch = batch[0]
 
-        # check if anchor box in the batch
-        if batch[0]['ego']['anchor_box'] is not None:
-            output_dict['ego'].update({'anchor_box':
-                torch.from_numpy(np.array(
-                    batch[0]['ego'][
-                        'anchor_box']))})
+        output_dict = {}
 
-        # save the transformation matrix (4, 4) to ego vehicle
-        # transformation is only used in post process (no use.)
-        # we all predict boxes in ego coord.
-        transformation_matrix_torch = \
-            torch.from_numpy(np.identity(4)).float()
-        transformation_matrix_clean_torch = \
-            torch.from_numpy(np.identity(4)).float()
+        # for late fusion, we also need to stack the lidar for better
+        # visualization
+        if self.visualize:
+            projected_lidar_list = []
+            origin_lidar = []
 
-        output_dict['ego'].update({'transformation_matrix':
-                                       transformation_matrix_torch,
-                                    'transformation_matrix_clean':
-                                       transformation_matrix_clean_torch,})
+        for cav_id, cav_content in batch.items():
+            output_dict.update({cav_id: {}})
+            # shape: (1, max_num, 7)
+            object_bbx_center = \
+                torch.from_numpy(np.array([cav_content['curr']['object_bbx_center']]))
+            object_bbx_mask = \
+                torch.from_numpy(np.array([cav_content['curr']['object_bbx_mask']]))
+            object_ids = cav_content['curr']['object_ids']
 
-        output_dict['ego'].update({
-            "sample_idx": batch[0]['ego']['sample_idx'],
-            "cav_id_list": batch[0]['ego']['cav_id_list']
-        })
+            # the anchor box is the same for all bounding boxes usually, thus
+            # we don't need the batch dimension.
+            if cav_content['past_k']['anchor_box'] is not None:
+                output_dict[cav_id].update({'anchor_box':
+                    torch.from_numpy(np.array(
+                        cav_content['past_k']['anchor_box']))})
+            if self.visualize:
+                transformation_matrix = cav_content['transformation_matrix_curr']
+                origin_lidar = [cav_content['curr']['origin_lidar']] # TODO: check
 
-        # output_dict['ego'].update({'veh_frame_id': batch[0]['ego']['veh_frame_id']})
+                if (self.params['only_vis_ego'] is False) or (cav_id=='ego'):
+                    # print(cav_id)
+                    import copy
+                    projected_lidar = copy.deepcopy(cav_content['curr']['origin_lidar']) # TODO: check
+                    projected_lidar[:, :3] = \
+                        box_utils.project_points_by_matrix_torch(
+                            projected_lidar[:, :3],
+                            transformation_matrix)
+                    projected_lidar_list.append(projected_lidar)
+
+            # processed lidar dictionary
+            processed_lidar_torch_dict = \
+                self.pre_processor.collate_batch(
+                    [cav_content['past_k']['processed_lidar']])
+            # label dictionary
+            label_torch_dict = \
+                self.post_processor.collate_batch([cav_content['curr']['label_dict']]) # TODO: check
+
+            # save the transformation matrix (4, 4) to ego vehicle
+            transformation_matrix_torch = \
+                torch.from_numpy(
+                    np.array(cav_content['transformation_matrix_past'])).float()
+            
+            # late fusion training, no noise
+            transformation_matrix_clean_torch = \
+                torch.from_numpy(
+                    np.array(cav_content['transformation_matrix_curr'])).float()
+
+            output_dict[cav_id].update({'object_bbx_center': object_bbx_center,
+                                        'object_bbx_mask': object_bbx_mask,
+                                        'processed_lidar': processed_lidar_torch_dict,
+                                        'label_dict': label_torch_dict,
+                                        'object_ids': object_ids,
+                                        'transformation_matrix': transformation_matrix_torch,
+                                        'transformation_matrix_clean': transformation_matrix_clean_torch})
+
+            if self.visualize:
+                origin_lidar = \
+                    np.array(
+                        downsample_lidar_minimum(pcd_np_list=origin_lidar))
+                origin_lidar = torch.from_numpy(origin_lidar)
+                output_dict[cav_id].update({'origin_lidar': origin_lidar})
+
+            output_dict[cav_id].update({'debug' : cav_content['debug']})
+
+        if self.visualize:
+            projected_lidar_stack = [torch.from_numpy(
+                np.vstack(projected_lidar_list))]
+            output_dict['ego'].update({'origin_lidar': projected_lidar_stack})
+            # output_dict['ego'].update({'projected_lidar_list': projected_lidar_list})
 
         return output_dict
 
+    def post_process_no_fusion(self, data_dict, output_dict_ego, return_uncertainty=False):
+        data_dict_ego = OrderedDict()
+        data_dict_ego['ego'] = data_dict['ego']
+        gt_box_tensor = self.post_processor.generate_gt_bbx(data_dict)
+
+        if return_uncertainty:
+            pred_box_tensor, pred_score, uncertainty = \
+                self.post_processor.post_process(data_dict_ego, output_dict_ego, return_uncertainty=True)
+            return pred_box_tensor, pred_score, gt_box_tensor, uncertainty
+        else:
+            pred_box_tensor, pred_score = \
+                self.post_processor.post_process(data_dict_ego, output_dict_ego)
+            return pred_box_tensor, pred_score, gt_box_tensor
+            
     def post_process(self, data_dict, output_dict):
         """
         Process the outputs of the model to 2D/3D bounding box.
@@ -1195,4 +1042,21 @@ class LateFusionDatasetIrregular(basedataset.BaseDataset):
 
         return pairwise_t_matrix
 
-# if __name__ == '__main__':   
+if __name__ == '__main__':   
+    
+    def train_parser():
+        parser = argparse.ArgumentParser(description="synthetic data generation")
+        parser.add_argument("--hypes_yaml", "-y", type=str, required=True,
+                            help='data generation yaml file needed ')
+        parser.add_argument('--model_dir', default='',
+                            help='Continued training path')
+        parser.add_argument('--fusion_method', '-f', default="intermediate",
+                            help='passed to inference.')
+        opt = parser.parse_args()
+        return opt
+    
+    opt = train_parser()
+    hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
+
+    print('### Dataset Building ... ###')
+    opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)

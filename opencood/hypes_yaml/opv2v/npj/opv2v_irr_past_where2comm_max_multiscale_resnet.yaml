@@ -17,24 +17,24 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 2
+num_sweep_frames: &past_k 1
 # time_delay: 0
 
 binomial_n: 10
-binomial_p: 0.3
+binomial_p: 0
 
 is_single_pre_trained:
-  pre_train_flag: false
-  # pre_train_fix: true
-  # pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
-  # pre_train_epoch: 24
+  pre_train_flag: true
+  # pre_train_fix: false
+  pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
+  pre_train_epoch: 24
 
-comm_range: 1000
+comm_range: 70
 
 yaml_parser: "load_point_pillar_params"
 train_params:
   batch_size: &batch_size 2 # TODO: 调整batch_size
-  epoches: 10
+  epoches: 20
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
@@ -56,7 +56,7 @@ preprocess:
     max_voxel_train: 32000
     max_voxel_test: 70000
   # lidar range for each individual cav. Format: xyzxyz minmax
-  cav_lidar_range: &cav_lidar [-140.8, -40, -3, 140.8, 40, 1]
+  cav_lidar_range: &cav_lidar [-140.8, -40, -3, 140.8, 40, 1] # [-140.8, -40, -3, 140.8, 40, 1] / [-153.6, -51.2, -3, 153.6, 51.2, 1], [-140.8, -38.4, -3, 140.8, 38.4, 1]
 
 data_augment:
   - NAME: random_world_flip
@@ -74,8 +74,8 @@ postprocess:
   gt_range: *cav_lidar
   anchor_args:
     cav_lidar_range: *cav_lidar
-    l: 4.5
-    w: 2
+    l: 3.9
+    w: 1.6
     h: 1.56
     r: [0, 90]
     feature_stride: 2

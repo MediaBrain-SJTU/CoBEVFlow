@@ -100,7 +100,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: true
+      resnet: False
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -145,7 +145,7 @@ model:
         # with_spe: true
         # with_scm: true
 
-      multi_scale: true
+      multi_scale: False
       layer_nums: *layer_nums
       num_filters: *num_filters
 

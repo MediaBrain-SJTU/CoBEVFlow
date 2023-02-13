@@ -294,7 +294,7 @@ class LateFusionDataset(basedataset.BaseDataset):
                 origin_lidar = [cav_content['origin_lidar']]
 
                 if (self.params['only_vis_ego'] is False) or (cav_id=='ego'):
-                    print(cav_id)
+                    # print(cav_id)
                     import copy
                     projected_lidar = copy.deepcopy(cav_content['origin_lidar'])
                     projected_lidar[:, :3] = \

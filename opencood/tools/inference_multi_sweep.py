@@ -32,7 +32,7 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=5,
+    parser.add_argument('--save_vis_interval', type=int, default=40,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
@@ -64,6 +64,36 @@ def main():
     if 'box_align' in hypes.keys():
         hypes['box_align']['val_result'] = hypes['box_align']['test_result']
         
+    # # setting noise
+    # np.random.seed(303)
+    # noise_setting = OrderedDict()
+    # noise_setting['add_noise'] = False
+    
+    # # build dataset for each noise setting
+    # print('Dataset Building')
+    # print(f"No Noise Added.")
+    # hypes.update({"noise_setting": noise_setting})
+
+    print('Building Datset ... ')
+    opencood_dataset = build_dataset(hypes, visualize=True, train=False)
+    data_loader = DataLoader(opencood_dataset,
+                            batch_size=1,
+                            num_workers=1, # TODO: 改为4
+                            collate_fn=opencood_dataset.collate_batch_test,
+                            shuffle=False,
+                            pin_memory=False,
+                            drop_last=False)
+
+    ######### for debug use ##########
+    # for i, batch_data in tenumerate(data_loader):
+    #     print("this is ", i)
+    #     if i==4:
+    #         print("Over!")
+    #         return 0
+    #     if batch_data is None:
+    #         continue
+    ###################################
+    
     print('Creating Model')
     model = train_utils.create_model(hypes)
     # we assume gpu is necessary
@@ -75,26 +105,6 @@ def main():
     saved_path = opt.model_dir
     _, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
-
-
-
-    # setting noise
-    np.random.seed(303)
-    noise_setting = OrderedDict()
-    noise_setting['add_noise'] = False
-    
-    # build dataset for each noise setting
-    print('Dataset Building')
-    print(f"No Noise Added.")
-    hypes.update({"noise_setting": noise_setting})
-    opencood_dataset = build_dataset(hypes, visualize=True, train=False)
-    data_loader = DataLoader(opencood_dataset,
-                            batch_size=1,
-                            num_workers=4,
-                            collate_fn=opencood_dataset.collate_batch_test,
-                            shuffle=False,
-                            pin_memory=False,
-                            drop_last=False)
     
     # Create the dictionary for evaluation
     result_stat = {0.3: {'tp': [], 'fp': [], 'gt': 0, 'score': []},
@@ -172,22 +182,26 @@ def main():
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
-                vis_save_path = os.path.join(vis_save_path_root, '3d_%05d.png' % i)
-                simple_vis.visualize(pred_box_tensor,
-                                    gt_box_tensor,
-                                    batch_data['ego'][
-                                        'origin_lidar'][0],
-                                    hypes['postprocess']['gt_range'],
-                                    vis_save_path,
-                                    method='3d',
-                                    left_hand=left_hand,
-                                    uncertainty=uncertainty_tensor)
+                # vis_save_path = os.path.join(vis_save_path_root, '3d_%05d.png' % i)
+                # simple_vis.visualize(pred_box_tensor,
+                #                     gt_box_tensor,
+                #                     batch_data['ego'][
+                #                         'origin_lidar'][0],
+                #                     hypes['postprocess']['gt_range'],
+                #                     vis_save_path,
+                #                     method='3d',
+                #                     left_hand=left_hand,
+                #                     uncertainty=uncertainty_tensor)
                 
-                vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d.png' % i)
+                try:
+                    debug_path = batch_data['ego']['debug']['scene_name'] + '_' + batch_data['ego']['debug']['cav_id'] + '_' + batch_data['ego']['debug']['timestamp']
+                    # print(debug_path)
+                except:
+                    debug_path = 'path'
+                vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d_%s.png' % (i, debug_path))
                 simple_vis.visualize(pred_box_tensor,
                                     gt_box_tensor,
-                                    batch_data['ego'][
-                                        'origin_lidar'][0],
+                                    batch_data['ego']['origin_lidar'][0],
                                     hypes['postprocess']['gt_range'],
                                     vis_save_path,
                                     method='bev',
@@ -199,7 +213,7 @@ def main():
     
     _, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, noise_level)
-    print("Module with time delay: {}".format(hypes['time_delay']))
+    # print("Module with time delay: {}".format(hypes['time_delay']))
 
 
 
