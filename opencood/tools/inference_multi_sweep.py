@@ -32,11 +32,12 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=40,
+    parser.add_argument('--save_vis_interval', type=int, default=80,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
+    parser.add_argument('--note', default="r_in_same_delay", type=str, help='save folder name')
     opt = parser.parse_args()
     return opt
 
@@ -78,7 +79,7 @@ def main():
     opencood_dataset = build_dataset(hypes, visualize=True, train=False)
     data_loader = DataLoader(opencood_dataset,
                             batch_size=1,
-                            num_workers=1, # TODO: 改为4
+                            num_workers=4, # TODO: 改为4
                             collate_fn=opencood_dataset.collate_batch_test,
                             shuffle=False,
                             pin_memory=False,
@@ -172,13 +173,12 @@ def main():
                     os.makedirs(npy_save_path)
                 inference_utils.save_prediction_gt(pred_box_tensor,
                                                 gt_box_tensor,
-                                                batch_data['ego'][
-                                                    'origin_lidar'][0],
+                                                batch_data['ego']['origin_lidar'][0],
                                                 i,
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{noise_level}')
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}')
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -211,9 +211,11 @@ def main():
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
     
-    _, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                opt.model_dir, noise_level)
-    # print("Module with time delay: {}".format(hypes['time_delay']))
+    avg_time_delay = -hypes['time_delay']*100 # unit is ms, negative
+    avg_sample_interval = hypes['time_delay']
+    ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
+                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note)
+    print("Module with time delay: {}".format(hypes['time_delay']))
 
 
 

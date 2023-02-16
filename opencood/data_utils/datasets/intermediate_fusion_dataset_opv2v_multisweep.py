@@ -347,7 +347,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
         debug_times[2] += (end_time - start_time)
 
-        return data, debug_times
+        return data
 
     def __getitem__(self, idx):
         '''

@@ -21,6 +21,9 @@ from turtle import update
 # import ipdb
 from opencood.models.sub_modules.torch_transformation_utils import warp_affine_simple
 from opencood.models.comm_modules.where2comm_multisweep import Communication
+from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
+
+from opencood.models.fuse_modules.STPT import STPT
 
 def clones(module, N):
     "Produce N identical layers."
@@ -105,6 +108,7 @@ class PositionalEncoding_spatial_custom(nn.Module):
 
         return self.dropout(x)
 
+
 class PositionalEncoding_sensor_dist(nn.Module):
 
     def __init__(self, d_model, dropout):
@@ -176,7 +180,6 @@ class PositionalEncoding_irregular_time(nn.Module):
                 tmp = tmp.repeat(1, x.shape[1], 1)
             x = x + tmp
 
-        
         return self.dropout(x)
 
 def attention(query, key, value, mask=None, dropout=None):
@@ -199,6 +202,7 @@ def attention(query, key, value, mask=None, dropout=None):
         p_attn = dropout(p_attn)
 
     return torch.matmul(p_attn, value), p_attn
+
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self, h, q_dim, k_dim,v_dim, d_model, dropout=0.1):
@@ -376,6 +380,7 @@ class AttentionFusion(nn.Module):
         self.if_conv_aggre = settings['if_conv_aggre']
         self.sup_individual = settings['sup_individual']
         self.if_swin_trans = settings['if_swin_trans']
+
         self.input_dim = input_dim 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -385,6 +390,11 @@ class AttentionFusion(nn.Module):
         self.width = width
         self.compensation=compensation
         if self.compensation:
+            if 'dilation_size' in settings:
+                self.dilation_size = settings['dilation_size']
+            else:
+                self.dilation_size = 1
+            self.dilate_mask = nn.MaxPool2d(kernel_size=self.dilation_size, stride=1, padding=int((self.dilation_size-1)/2))
             if self.if_spatial_encoding:
                 self.spatial_encoding = PositionalEncoding_spatial(self.input_dim, hidden_dim, dropout, max_len)
                 self.spatial_encoding_nonego = PositionalEncoding_spatial_custom(self.input_dim, hidden_dim, dropout)
@@ -419,6 +429,7 @@ class AttentionFusion(nn.Module):
                 self.dotproductattn = ScaledDotProductAttention(self.input_dim)
             if self.if_conv_aggre:
                 self.conv_aggre = SpatialAttention_mtf()
+        
         print("================Rain attention Init================")
 
 
@@ -430,7 +441,7 @@ class AttentionFusion(nn.Module):
         -----------
         features: torch.Tensor, shape (B, C, H, W)
             neighbor features in ego view
-            B : 按照顺序排列: ego[curr], cav_1[curr], cav_1[past_1], ..., cav_2[past_k], ....
+            B = \sum_{i}^{num_cav} k_i, num_cav 表示cav数量, k_i 表示对于cav_i 有多少观测帧
             C : feature 维度，一般为 256
             H : height, 一般为 100
             W : width, 一般为 252
@@ -441,7 +452,7 @@ class AttentionFusion(nn.Module):
         time_stamps: torch.Tensor, shape (B)
             表示每个位置的时间信息
 
-        valid_mask: (B,H,W)
+        valid_mask: (B, 1, H, W)
             为0/1,表示是否在该位置有效
 
         Returns:
@@ -471,33 +482,60 @@ class AttentionFusion(nn.Module):
                 individual_recon_loss = 0
                 
                 num_nonego = int((cav_num-1)/(self.sweep_length+1)) 
-                nonego_features = features[1:].clone()
-                nonego_timestamps = time_stamps[1:]
-                nonego_features = nonego_features.permute(0,2,3,1)
+                nonego_features = features[1:].clone()                  # [nonego_cavs(k+1), C, H, W]
+                nonego_timestamps = time_stamps[1:]                     # [nonego_cavs, ]
+                nonego_features = nonego_features.permute(0,2,3,1)      # 
                 nonego_features = self.time_encoding(nonego_features,nonego_timestamps)
-                nonego_features = nonego_features.permute(0,3,1,2)
+                nonego_features = nonego_features.permute(0,3,1,2)      # [nonego_cavs(k+1), C, H, W]
 
-                nonego_splits = nonego_features.split(self.sweep_length+1,0)
-                nonego_splits = torch.stack(nonego_splits,dim=0)  ###[nonego_cars, T, C,H,W]
-                nonego_history = nonego_splits[:,1:]
+                # mask after TE, valid_mask: [B, H, W]
+                non_ego_mask = valid_mask[1:]                           # [nonego_cavs*(k+1), 1, H, W]
+                nonego_features = nonego_features * non_ego_mask        # [nonego_cavs*(k+1), 1, H, W]
+
+                nonego_splits = nonego_features.split(self.sweep_length+1,0) # ([1+k, C, H, W], [], ..., [])
+                nonego_splits = torch.stack(nonego_splits,dim=0)        # [nonego_cars, 1+k, C, H, W]
+                nonego_history = nonego_splits[:,1:]                    # [nonego_cars, k, C, H, W]
                 # nonego_splits = nonego_splits.permute(0,3,4,1,2).reshape(num_nonego*H*W, self.sweep_length, C)
                 # time_attned_feature = self.layers_temporal[0](nonego_splits, nonego_splits, nonego_splits, None)
                 # time_attned_feature = nonego_splits
                 # time_attned_feature = time_attned_feature.reshape(num_nonego, H, W, self.sweep_length*C).permute(0,3,1,2) 
                 
-                hidden = self.swin_trans(nonego_history)##############[non_ego_cars, 1,C,H,W]
+                hidden = self.swin_trans(nonego_history)                # [non_ego_cars, 1, C, H, W]
                 # query = self.predict_query.repeat(num_nonego,1,1)
                 # final_estimations = self.predict_attention(query, hidden, hidden, None).reshape(num_nonego, H, W, -1).permute(0,3,1,2)
-                final_estimations = hidden.squeeze(1)##############[non_ego_cars,C,H,W]
-                
-                individual_recon_loss = torch.torch.nn.functional.smooth_l1_loss(final_estimations,nonego_splits[:,0],reduction='mean')
+                final_estimations = hidden.squeeze(1)                   # [non_ego_cars, C, H, W]
+
+                non_ego_mask_split = non_ego_mask.split(self.sweep_length+1,0) # ([1+k, 1, H, W], ... ) nonego_cavs 
+                non_ego_mask = torch.stack(non_ego_mask_split, dim=0)   # nonego_cavs, 1+k, 1, H, W
+                non_ego_mask_past = non_ego_mask[:, 1:]                 # nonego_cavs, k, H, W
+                non_ego_mask_past_union = (torch.sum(non_ego_mask_past, dim=1)>0).to(torch.float32) # nonego_cavs, 1, H, W
+                # torch.save(non_ego_mask_past_union,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'non_ego_mask_past_union_{self.dilation_size}' + '.pt')
+                non_ego_mask_past_union = self.dilate_mask(non_ego_mask_past_union)
+                # torch.save(non_ego_mask_past_union,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'non_ego_mask_past_union_dilated_{self.dilation_size}' + '.pt')
+
+                # debug use, uncomment to retrieve current mask
+                ego_mask_curr = valid_mask[0]
+                nonego_mask_curr = non_ego_mask[:, 0] # [nonego_cav, 1, H, W]
+                # torch.save(nonego_mask_curr,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'nonego_mask_curr_{self.dilation_size}' + '.pt')
+
+                individual_recon_loss_pos = torch.torch.nn.functional.smooth_l1_loss(non_ego_mask_past_union*final_estimations,nonego_splits[:,0],reduction='sum')
+                if non_ego_mask_past_union.sum() != 0:
+                    individual_recon_loss_pos /= (non_ego_mask_past_union.sum())
+
+                individual_recon_loss_neg = torch.torch.nn.functional.smooth_l1_loss((1-non_ego_mask_past_union)*final_estimations,nonego_splits[:,0],reduction='sum')
+                if (1-non_ego_mask_past_union).sum() != 0:
+                    individual_recon_loss_neg /= ((1-non_ego_mask_past_union).sum())
+
+                individual_recon_loss = individual_recon_loss_pos + individual_recon_loss_neg
+
+
                 ###############skimage.dilation##########################################
                 final_fuse_estimation = torch.max(torch.cat((features[:1],final_estimations),dim=0), dim=0)[0]
                 final_fuse_feature = torch.max(torch.cat((features[:1],curr_features),dim=0),dim=0)[0]
-                fuse_recon_loss = torch.torch.nn.functional.smooth_l1_loss(final_fuse_estimation,final_fuse_feature,reduction='mean')
+                # fuse_recon_loss = torch.torch.nn.functional.smooth_l1_loss(final_fuse_estimation,final_fuse_feature,reduction='mean')
 
                 final_fuse_feature_latency = torch.max(torch.cat((features[:1],latency_features),dim=0),dim=0)[0]
-                ipdb.set_trace()
+                # ipdb.set_trace()
                 # print('#######################individual:',torch.torch.nn.functional.smooth_l1_loss(latest_features[1:],curr_features[1:]),individual_recon_loss)
                 # latest_features = features[self.sweep_length-1::self.sweep_length].clone()
                 # latest_features[0] = features[0]
@@ -510,7 +548,7 @@ class AttentionFusion(nn.Module):
                 # ipdb.set_trace()
                 # print('#######################:fuse',torch.torch.nn.functional.smooth_l1_loss(final1,final_fuse_feature),fuse_recon_loss)
              
-                return final_fuse_estimation,final_fuse_feature,final_fuse_feature_latency, individual_recon_loss+fuse_recon_loss
+                return final_fuse_estimation,final_fuse_feature,final_fuse_feature_latency, individual_recon_loss # +fuse_recon_loss
                 # return final_fuse_feature, 0
 
             
@@ -606,8 +644,6 @@ class AttentionFusion(nn.Module):
                 features_to_aggre = self.spatial_encoding_nonego(features_to_aggre,nonego_idx)
             if self.if_nonego_time_encoding:
                 features_to_aggre = self.time_encoding(features_to_aggre,time_stamps)
-        
-
         ###########################################
 
         ################################################### 
@@ -628,7 +664,7 @@ class AttentionFusion(nn.Module):
                 else:
                     features_to_aggre = self.layers_temporal[l](features_to_aggre,features_to_aggre,features_to_aggre,masks)
                 features[:,nonego_idx[0],nonego_idx[1],:] = features_to_aggre.permute(1,0,2)
-           
+
 
             if self.if_spatial_conv:
                 features = features.permute(0,3,1,2)
@@ -647,9 +683,9 @@ class MaxFusion(nn.Module):
     def forward(self, x):
         return torch.max(x, dim=0)[0]
         
-class raindrop_fuse(nn.Module):
+class raindrop_fuse_compensation(nn.Module):
     def __init__(self, args):
-        super(raindrop_fuse, self).__init__()
+        super(raindrop_fuse_compensation, self).__init__()
         
         self.communication = False
         self.round = 1
@@ -674,24 +710,33 @@ class raindrop_fuse(nn.Module):
             neighbor_range = args['neighbor_range']
             max_len = args['max_len']
             height = 100
-            width = 252
-
+            width = 352
+            self.fuse_layer1 = False
             if self.multi_scale:
                 layer_nums = args['layer_nums']
                 num_filters = args['num_filters']
                 self.num_levels = len(layer_nums)
-                self.fuse_modules = nn.ModuleList()
-                for idx in range(self.num_levels):
-                    fuse_network = AttentionFusion(args['fusion_setting'], input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len)
-                    for p in fuse_network.parameters():
+                if self.fuse_layer1:
+                    self.fuse_modules = AttentionFusion(args['fusion_setting'], input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len)
+                    for p in self.fuse_modules.parameters():
                         if p.dim() > 1:
                             nn.init.xavier_uniform_(p)
+                else:
+                    self.fuse_modules = nn.ModuleList()
+                    for idx in range(self.num_levels):
+                        if idx==0:
+                            fuse_network = AttentionFusion(args['fusion_setting'], input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len, compensation=True)
+                        else:
+                            fuse_network = AttentionFusion(args['fusion_setting'], input_dim, d_ff, h, num_layers, neighbor_range, height, width, dropout, max_len, compensation=False)
+                        for p in fuse_network.parameters():
+                            if p.dim() > 1:
+                                nn.init.xavier_uniform_(p)
 
-                    height = int(height/2)
-                    width = int(width/2)
-                    input_dim = input_dim * 2
-                    d_ff = d_ff * 2
-                    self.fuse_modules.append(fuse_network)
+                        height = int(height/2)
+                        width = int(width/2)
+                        input_dim = input_dim * 2
+                        d_ff = d_ff * 2
+                        self.fuse_modules.append(fuse_network)
             else:
                 self.fuse_modules = AttentionFusion(input_dim, d_ff, h, num_layers, neighbor_range, 100, 252, dropout, max_len)
                 # This was important from their code. 
@@ -738,8 +783,9 @@ class raindrop_fuse(nn.Module):
             different cav's lidar feature
             for example: k=4, then return [(3x4, C, H, W), (2x4, C, H, W), ...]
         """
-        cum_sum_len = torch.cumsum(len*k, dim=0)
+        cum_sum_len = torch.cumsum(len*k-(k-1), dim=0)
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
+        
         return split_x
 
     def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None):
@@ -770,7 +816,8 @@ class raindrop_fuse(nn.Module):
         """
         _, C, H, W = x.shape
         B, L, K = pairwise_t_matrix.shape[:3]
-
+        # print('num',x.shape[0],pairwise_t_matrix.shape)
+        
         # (B,L,k,2,3)
         pairwise_t_matrix = pairwise_t_matrix[:,:,:,[0, 1],:][:,:,:,:,[0, 1, 3]] 
         # [B, L, L, 2, 3], 只要x,y这两个维度就可以(z只有一层)，所以提取[0,1,3]作为仿射变换矩阵, 大小(2, 3)
@@ -778,42 +825,28 @@ class raindrop_fuse(nn.Module):
         pairwise_t_matrix[...,1,0] = pairwise_t_matrix[...,1,0] * W / H
         pairwise_t_matrix[...,0,2] = pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
         pairwise_t_matrix[...,1,2] = pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
-
+        
         if self.multi_scale:
-            ups = []
+            
             # backbone.__dict__()
             with_resnet = True if hasattr(backbone, 'resnet') else False
             if with_resnet:
                 feats = backbone.resnet(x)  # tuple((B, C, H, W), (B, 2C, H/2, W/2), (B, 4C, H/4, W/4))
             
-            for i in range(self.num_levels):
-                x = feats[i] if with_resnet else backbone.blocks[i](x)
-
-                ############ 1. Communication (Mask the features) #########
-                if i==0:
-                    if self.communication:
-                        batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
-                        batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
-                        _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
-                        communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
-                        # TODO scale = 0 不加 mask
-                        x = x * communication_masks_tensor
-                    else:
-                        communication_rates = torch.tensor(0).to(x.device)
-                else:
-                    if self.communication:
-                        communication_masks_tensor = F.max_pool2d(communication_masks_tensor, kernel_size=2)
-                        # TODO scale = 1, 2 不加 mask
-                        # x = x * communication_masks_tensor
-                
-                ############ 2. Split the confidence map #######################
-                # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]
-                # for example, i=1, past_k=3, b_1 has 2 cav, b_2 has 3 cav ... :
-                # [[2*3, 256*2, 100/2, 252/2], [3*3, 256*2, 100/2, 252/2], ...]
-                batch_node_features = self.regroup(x, record_len, K)
-
-                ############ 3. Fusion ####################################
+            if self.fuse_layer1:
+                all_recon_loss = 0
+                layer1_feats = backbone.resnet.forward_layer1(x)
+                if self.communication:
+                    batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
+                    batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
+                    _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
+                    communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
+                    # TODO scale = 0 不加 mask
+                    layer1_feats = layer1_feats * communication_masks_tensor
+                batch_node_features = self.regroup(layer1_feats, record_len, K)
                 x_fuse = []
+                x_fuse_curr = []
+                x_fuse_latency = []
                 for b in range(B):
                     # number of valid agent
                     N = record_len[b]
@@ -821,46 +854,172 @@ class raindrop_fuse(nn.Module):
                     t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
                     node_features = batch_node_features[b]
                     C, H, W = node_features.shape[1:]
-                    # if node_features.shape[0] != t_matrix.shape[0]:
+                    # print('node and t mat',node_features.shape,t_matrix.shape,record_len)
+                    t_matrix = t_matrix[K-1:]
                     neighbor_feature = warp_affine_simple(node_features,
                                                     t_matrix,
                                                     (H, W))
-                    record_frames = np.ones((N))*K
                     
+                    # def forward(self, feartures, comm_mask, sensor_dist, record_frames, time_diffs):
+                    record_frames = np.ones((N))*K; record_frames[0]-=(K-1)
                     if self.agg_mode == 'RAIN':
                         # for sensor embedding
                         sensor_dist = -1# (B, H, W)
-                        x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
-                        # # TODO for scale debug
-                        # if i==self.num_levels-1:
-                        #     x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
-                        # else:
-                        #     x_fuse.append(neighbor_feature[0])
-                    else: # ATTEN, MAX, Transformer
-                        x_fuse.append(self.fuse_modules[i](neighbor_feature))
-                        # x_fuse.append(neighbor_feature[0]) # TODO: for single
-                        # print("=== single feature! ===")
-                        # # TODO for scale debug
-                        # if i==self.num_levels-1:
-                        #     x_fuse.append(self.fuse_modules[i](neighbor_feature))
-                        # else:
-                        #     x_fuse.append(neighbor_feature[0])
+                        # x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                        features,features_curr,features_latency, recon_loss = self.fuse_modules(neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b])
+                        all_recon_loss += recon_loss # TODO: 是否需要添加 /= B ? 
+                        x_fuse.append(features)
+                        x_fuse_curr.append(features_curr)
+                        x_fuse_latency.append(features_latency)
+                x_fuse = torch.stack(x_fuse)  ###(batch, channel, h, w)
+                x_fuse_curr = torch.stack(x_fuse_curr)
+                x_fuse_latency = torch.stack(x_fuse_latency)
 
-                x_fuse = torch.stack(x_fuse)
-
-                ############ 4. Deconv ####################################
+                layer2_feat, layer3_feat = backbone.resnet.forward_from_layer1(x_fuse)
+                ups = []
                 if len(backbone.deblocks) > 0:
-                    ups.append(backbone.deblocks[i](x_fuse))
-                else:
-                    ups.append(x_fuse)
+                    ups.append(backbone.deblocks[0](x_fuse))
+                    ups.append(backbone.deblocks[1](layer2_feat))
+                    ups.append(backbone.deblocks[2](layer3_feat))
                 
-            if len(ups) > 1:
-                x_fuse = torch.cat(ups, dim=1)
-            elif len(ups) == 1:
-                x_fuse = ups[0]
-            
-            if len(backbone.deblocks) > self.num_levels:
-                x_fuse = backbone.deblocks[-1](x_fuse)
+                if len(ups) > 1:
+                    x_fuse = torch.cat(ups, dim=1)
+                elif len(ups) == 1:
+                    x_fuse = ups[0]
+                
+                if len(backbone.deblocks) > self.num_levels:
+                    x_fuse = backbone.deblocks[-1](x_fuse)
+
+                
+                layer2_feat_curr, layer3_feat_curr = backbone.resnet.forward_from_layer1(x_fuse_curr)
+                ups = []
+                if len(backbone.deblocks) > 0:
+                    ups.append(backbone.deblocks[0](x_fuse_curr))
+                    ups.append(backbone.deblocks[1](layer2_feat_curr))
+                    ups.append(backbone.deblocks[2](layer3_feat_curr))
+                    
+                if len(ups) > 1:
+                    x_fuse_curr = torch.cat(ups, dim=1)
+                elif len(ups) == 1:
+                    x_fuse_curr = ups[0]
+                
+                if len(backbone.deblocks) > self.num_levels:
+                    x_fuse_curr = backbone.deblocks[-1](x_fuse_curr)
+
+                
+                layer2_feat_latency, layer3_feat_latency = backbone.resnet.forward_from_layer1(x_fuse_latency)
+                ups = []
+                if len(backbone.deblocks) > 0:
+                    ups.append(backbone.deblocks[0](x_fuse_latency))
+                    ups.append(backbone.deblocks[1](layer2_feat_latency))
+                    ups.append(backbone.deblocks[2](layer3_feat_latency))
+                    
+                if len(ups) > 1:
+                    x_fuse_latency = torch.cat(ups, dim=1)
+                elif len(ups) == 1:
+                    x_fuse_latency = ups[0]
+                
+                if len(backbone.deblocks) > self.num_levels:
+                    x_fuse_latency = backbone.deblocks[-1](x_fuse_latency)
+
+            else:
+                ups = []
+                ups_curr = []
+                ups_latency = []
+                all_recon_loss = 0
+                for i in range(self.num_levels):
+                    x = feats[i] if with_resnet else backbone.blocks[i](x)
+                    ############ 1. Communication (Mask the features) #########
+                    if i==0:
+                        if self.communication:
+                            batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
+                            batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
+                            _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
+                            communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
+                            # TODO scale = 0 不加 mask
+                            x = x * communication_masks_tensor
+                        else:
+                            communication_rates = torch.tensor(0).to(x.device)
+                    else:
+                        if self.communication:
+                            communication_masks_tensor = F.max_pool2d(communication_masks_tensor, kernel_size=2)
+                            # TODO scale = 1, 2 不加 mask
+                            # x = x * communication_masks_tensor
+                    
+                    ############ 2. Split the confidence map #######################
+                    # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]
+                    # for example, i=1, past_k=3, b_1 has 2 cav, b_2 has 3 cav ... :
+                    # [[2*3, 256*2, 100/2, 252/2], [3*3, 256*2, 100/2, 252/2], ...]
+                    # print('x',x.shape)
+                    batch_node_features = self.regroup(x, record_len, K)
+
+                    ############ 3. Fusion ####################################
+                    x_fuse = []
+                    x_fuse_curr = []
+                    x_fuse_latency = []
+                    for b in range(B):
+                        # number of valid agent
+                        N = record_len[b]
+                        # t_matrix[i, j]-> from i to j
+                        t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
+                        node_features = batch_node_features[b]
+                        C, H, W = node_features.shape[1:]
+                        # print('node and t mat',node_features.shape,t_matrix.shape,record_len)
+                        t_matrix = t_matrix[K-1:]
+                        neighbor_feature = warp_affine_simple(node_features,
+                                                        t_matrix,
+                                                        (H, W))
+                        record_frames = np.ones((N))*K
+                        # def forward(self, feartures, comm_mask, sensor_dist, record_frames, time_diffs):
+                        
+                        if self.agg_mode == 'RAIN':
+                            # for sensor embedding
+                            sensor_dist = -1# (B, H, W)
+                            # x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                            features,features_curr,features_latency, recon_loss = self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b])
+                            x_fuse.append(features)
+                            x_fuse_curr.append(features_curr)
+                            x_fuse_latency.append(features_latency)
+                            all_recon_loss += recon_loss
+                            # # TODO for scale debug
+                            # if i==self.num_levels-1:
+                            #     x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                            # else:
+                            #     x_fuse.append(neighbor_feature[0])
+                        else: # ATTEN, MAX, Transformer
+                            x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                            # # TODO for scale debug
+                            # if i==self.num_levels-1:
+                            #     x_fuse.append(self.fuse_modules[i](neighbor_feature))
+                            # else:
+                            #     x_fuse.append(neighbor_feature[0])
+
+                    x_fuse = torch.stack(x_fuse)
+                    x_fuse_curr = torch.stack(x_fuse_curr)
+                    x_fuse_latency = torch.stack(x_fuse_latency)
+                    ############ 4. Deconv ####################################
+                    if len(backbone.deblocks) > 0:
+                        ups.append(backbone.deblocks[i](x_fuse))
+                        ups_curr.append(backbone.deblocks[i](x_fuse_curr))
+                        ups_latency.append(backbone.deblocks[i](x_fuse_latency))
+                    else:
+                        ups.append(x_fuse)
+                        ups_curr.append(x_fuse_curr)
+                        ups_latency.append(x_fuse_latency)
+                    
+                if len(ups) > 1:
+                    x_fuse = torch.cat(ups, dim=1)
+                    x_fuse_curr = torch.cat(ups_curr, dim=1)
+                    x_fuse_latency = torch.cat(ups_latency, dim=1)
+                elif len(ups) == 1:
+                    x_fuse = ups[0]
+                    x_fuse_curr = ups_curr[0]
+                    x_fuse_latency = ups_latency[0]
+                
+                if len(backbone.deblocks) > self.num_levels:
+                    x_fuse = backbone.deblocks[-1](x_fuse)
+                    x_fuse_curr = backbone.deblocks[-1](x_fuse_curr)
+                    x_fuse_latency = backbone.deblocks[-1](x_fuse_latency)
                 
         else:
             ############ 1. Split the features #######################
@@ -903,5 +1062,4 @@ class raindrop_fuse(nn.Module):
 
             # self.fuse_modsules(x_fuse, record_len)
         
-        return x_fuse, communication_rates, {}
-
+        return x_fuse,x_fuse_curr,x_fuse_latency, communication_rates, all_recon_loss, {}

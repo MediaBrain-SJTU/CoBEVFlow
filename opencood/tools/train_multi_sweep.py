@@ -20,9 +20,14 @@ import opencood.hypes_yaml.yaml_utils as yaml_utils
 from opencood.tools import train_utils
 from opencood.data_utils.datasets import build_dataset
 
+from tqdm import tqdm
+from tqdm.contrib import tenumerate
+from tqdm.auto import trange
+
 
 run_test = True
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import illegal_path_list
+compensation = False 
 
 def train_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
@@ -105,7 +110,7 @@ def main():
     if torch.cuda.is_available():
         model.to(device)
 
-    # define the loss
+    # define the loss # TODO
     criterion = train_utils.create_loss(hypes)
 
     # optimizer setup
@@ -126,18 +131,18 @@ def main():
         saved_path = train_utils.setup_train(hypes)
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer)
 
-    is_fix = False # TODO: pretrain 记得删除
-    pretrain_path = "/DB/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26_pretrain"
-    initial_epoch = 17
-    if is_fix:
-        pre_train_model = torch.load(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch))
-        model.load_state_dict(pre_train_model, strict=False)
-        print("### Pre-trained loaded successfully! ###".format(os.path.join(opt.model_dir, 'net_epoch%d.pth' % initial_epoch)))
-        for name, value in model.named_parameters():
-            if name == 'cls_head.weight' or name == 'cls_head.bias':
-                continue # TODO: pretrain 记得删除
-            if name in pre_train_model:
-                value.requires_grad = False
+    # is_fix = False # TODO: pretrain 记得删除
+    # pretrain_path = "/DB/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26_pretrain"
+    # initial_epoch = 17
+    # if is_fix:
+    #     pre_train_model = torch.load(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch))
+    #     model.load_state_dict(pre_train_model, strict=False)
+    #     print("### Pre-trained loaded successfully! ###".format(os.path.join(opt.model_dir, 'net_epoch%d.pth' % initial_epoch)))
+    #     for name, value in model.named_parameters():
+    #         if name == 'cls_head.weight' or name == 'cls_head.bias':
+    #             continue # TODO: pretrain 记得删除
+    #         if name in pre_train_model:
+    #             value.requires_grad = False
 
     end_time = time.time()
     print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
@@ -151,7 +156,7 @@ def main():
     proj_first = hypes['fusion']['args']['proj_first']
     # used to help schedule learning rate
 
-    ############ For DiscoNet ##############
+    ############ For DiscoNet TODO: 用不到的code 可以删除 ##############
     if "kd_flag" in hypes.keys():
         kd_flag = True
         teacher_model_name = hypes['kd_flag']['teacher_model'] # point_pillar_disconet_teacher
@@ -218,7 +223,7 @@ def main():
             # start_time = time.time()
 
             batch_data['ego']['epoch'] = epoch
-            # sample_interval += batch_data['ego']['avg_sample_interval'] # TODO: 打开
+            # sample_interval += batch_data['ego']['avg_sample_interval'] # debug use 打开
             ouput_dict = model(batch_data['ego'])
 
             # end_time = time.time()
@@ -232,9 +237,22 @@ def main():
 
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
-            final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+            
+            if compensation:
+                final_loss = ouput_dict['recon_loss'] 
+                detection_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+            else:
+                final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+
             if i%10 == 0:
                 criterion.logging(epoch, i, len(train_loader), writer)
+                # TODO: Uncomment for debug time compensation module
+                if compensation:
+                    curr_loss = criterion(ouput_dict, batch_data['ego']['label_dict'],mode='curr')
+                    latency_loss = criterion(ouput_dict, batch_data['ego']['label_dict'],mode='latency')
+                    print('curr_loss',curr_loss.item())
+                    print('latency_loss',latency_loss.item())
+                    print('recon_loss',ouput_dict['recon_loss'].item())
 
             # back-propagation
             final_loss.backward()
@@ -254,11 +272,11 @@ def main():
             end_time = time.time()
             print('### %d th epoch trained, start validation! Time consumed %.2f ###' % (epoch, (end_time - start_time)/60))
             with torch.no_grad():
-                for i, batch_data in enumerate(val_loader):
+                for i, batch_data in tenumerate(val_loader):
                     # TODO: debug use
                     # print(i)
-                    if i == 10:
-                        break
+                    # if i == 10:
+                    #     break
 
                     if batch_data is None:
                         continue

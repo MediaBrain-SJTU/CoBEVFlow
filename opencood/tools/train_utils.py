@@ -15,7 +15,7 @@ import torch.optim as optim
 import numpy
 from pathlib import Path
 
-def backup_script(full_path, folders_to_save=["models", "data_utils", "utils", "loss"]):
+def backup_script(full_path, folders_to_save=["models", "data_utils", "utils", "loss", "tools"]):
     target_folder = os.path.join(full_path, 'scripts')
     if not os.path.exists(target_folder):
         os.mkdir(target_folder)
@@ -148,28 +148,28 @@ def setup_train(hypes):
     folder_name = model_name
     # folder_name 需要包含：
     # model_name, time_delay, num_sweep, batch_size, 
-    if 'time_delay' in hypes:
-        folder_name = folder_name + '_d_' + str(hypes['time_delay'])
-    else:
-        folder_name = folder_name + '_d_' + str(0)
-    if 'num_sweep_frames' in hypes:
-        folder_name = folder_name + '_swps_' + str(hypes['num_sweep_frames'])
-    else:
-        folder_name = folder_name + '_swps_' + str(1)
-    folder_name = folder_name + '_bs_' + str(hypes['train_params']['batch_size'])
-    model_hypes = hypes['model']['args']
-    if 'base_bev_backbone' in model_hypes and model_hypes['base_bev_backbone']['resnet']:
-        folder_name = folder_name + '_w_resnet'
-    else:
-        folder_name = folder_name + '_wo_resnet'
-    if 'rain_model' in model_hypes and  model_hypes['rain_model']['multi_scale']:
-        folder_name = folder_name + '_w_multiscale'
-    else:
-        folder_name = folder_name + '_wo_multiscale'
-    if 'exp_name' in hypes and len(str(hypes['exp_name']))>0:
-        folder_name = folder_name + '_' + str(hypes['exp_name'])
-    curr_time = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
-    folder_name = folder_name + curr_time
+    # if 'time_delay' in hypes:
+    #     folder_name = folder_name + '_d_' + str(hypes['time_delay'])
+    # else:
+    #     folder_name = folder_name + '_d_' + str(0)
+    # if 'num_sweep_frames' in hypes:
+    #     folder_name = folder_name + '_swps_' + str(hypes['num_sweep_frames'])
+    # else:
+    #     folder_name = folder_name + '_swps_' + str(1)
+    # folder_name = folder_name + '_bs_' + str(hypes['train_params']['batch_size'])
+    # model_hypes = hypes['model']['args']
+    # if 'base_bev_backbone' in model_hypes and model_hypes['base_bev_backbone']['resnet']:
+    #     folder_name = folder_name + '_w_resnet'
+    # else:
+    #     folder_name = folder_name + '_wo_resnet'
+    # if 'rain_model' in model_hypes and  model_hypes['rain_model']['multi_scale']:
+    #     folder_name = folder_name + '_w_multiscale'
+    # else:
+    #     folder_name = folder_name + '_wo_multiscale'
+    # if 'exp_name' in hypes and len(str(hypes['exp_name']))>0:
+    #     folder_name = folder_name + '_' + str(hypes['exp_name'])
+    # curr_time = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
+    # folder_name = folder_name + curr_time
     # current_path = os.path.dirname(__file__)
     current_path = Path("/DB/data/sizhewei")
     current_path = os.path.join(current_path, 'logs/')

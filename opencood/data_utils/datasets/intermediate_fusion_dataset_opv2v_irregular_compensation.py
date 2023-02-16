@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-# Author: sizhewei @ 2023/1/27
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# Author: sizhewei @ 2023/2/13
 
 """
 Dataset class for intermediate fusion with 
@@ -23,7 +22,7 @@ from scipy import stats
 import opencood.data_utils.post_processor as post_processor
 import opencood.utils.pcd_utils as pcd_utils
 from opencood.utils.keypoint_utils import bev_sample, get_keypoints
-from opencood.data_utils.datasets import basedataset
+from opencood.data_utils.datasets import basedataset, intermediate_fusion_dataset_opv2v_irregular
 from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.hypes_yaml.yaml_utils import load_yaml
 from opencood.utils.pcd_utils import \
@@ -34,247 +33,19 @@ from opencood.utils.transformation_utils import tfm_to_pose, x1_to_x2, x_to_worl
 from opencood.utils.pose_utils import add_noise_data_dict, remove_z_axis
 from opencood.utils.common_utils import read_json
 from opencood.utils import box_utils
-# from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
 
 # global, for debug use
 illegal_path_list = set()
 
-class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
+class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset_opv2v_irregular.IntermediateFusionDatasetIrregular):
     """
-    This class is for intermediate fusion where each vehicle transmit the
-    deep features to ego.
+    This class is for intermediate fusion on OPV2V_irregular, with past k frames and current frame as input. 
+    Note: current frame is used for supervison, not for feature fusion!
     """
     def __init__(self, params, visualize, train=True):
-
-        self.times = []
-
-        self.params = params
-        self.visualize = visualize
-        self.train = train
-
-        self.pre_processor = None
-        self.post_processor = None
-        self.data_augmentor = DataAugmentor(params['data_augment'],
-                                            train)
-
-        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
-            self.k = params['num_sweep_frames']
-        else:
-            self.k = 0
-
-        if 'time_delay' in params:          # number of time delay
-            self.tau = params['time_delay'] 
-        else:
-            self.tau = 0
-
-        if 'binomial_n' in params:
-            self.binomial_n = params['binomial_n']
-        else:
-            self.binomial_n = 0
-
-        if 'binomial_p' in params:
-            self.binomial_p = params['binomial_p']
-        else:
-            self.binomial_p = 1
-
-        self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
-
-        assert 'proj_first' in params['fusion']['args']
-        if params['fusion']['args']['proj_first']:
-            self.proj_first = True
-        else:
-            self.proj_first = False
-
-        if self.train:
-            root_dir = params['root_dir']
-        else:
-            root_dir = params['validate_dir']
-        
-        print("Dataset dir:", root_dir)
-
-        if 'train_params' not in params or\
-                'max_cav' not in params['train_params']:
-            self.max_cav = 5
-        else:
-            self.max_cav = params['train_params']['max_cav']
-
-        # first load all paths of different scenarios
-        scenario_folders = sorted([os.path.join(root_dir, x)
-                                   for x in os.listdir(root_dir) if
-                                   os.path.isdir(os.path.join(root_dir, x))])
-        scenario_folders_name = sorted([x
-                                   for x in os.listdir(root_dir) if
-                                   os.path.isdir(os.path.join(root_dir, x))])
-        '''
-        scenario_database Structure: 
-        {
-            scenario_id : {
-                cav_1 : {
-                    'ego' : true / false , 
-                    timestamp1 : {
-                        yaml: path,
-                        lidar: path, 
-                        cameras: list of path
-                    },
-                    ...
-                },
-                ...
-            }
-        }
-        '''
-        self.scenario_database = OrderedDict()
-        self.len_record = []
-
-        # loop over all scenarios
-        for (i, scenario_folder) in enumerate(scenario_folders):
-            self.scenario_database.update({i: OrderedDict()})
-
-            # copy timestamps npy file
-            timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
-            time_annotations = np.load(timestamps_file)
-
-            # at least 1 cav should show up
-            cav_list = sorted([x 
-                               for x in os.listdir(scenario_folder) if 
-                               os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
-            assert len(cav_list) > 0
-
-            # use the frame number as key, the full path as the values
-            yaml_files = sorted([x
-                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
-                        x.endswith(".json")], 
-                        key=lambda y:float((y.split('/')[-1]).split('.json')[0]))
-            if len(yaml_files)==0:
-                yaml_files = sorted([x 
-                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
-                            x.endswith('.yaml')], key=lambda y:float((y.split('/')[-1]).split('.yaml')[0]))
-
-            start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
-            while(1):
-                time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
-                time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
-                if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
-                    start_timestamp += 1
-                else:
-                    break
-
-            end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
-            if start_timestamp%2 == 0:
-                # even
-                end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
-            else:
-                end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
-            num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
-            regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
-
-            # loop over all CAV data
-            for (j, cav_id) in enumerate(cav_list):
-                if j > self.max_cav - 1:
-                    print('too many cavs')
-                    break
-                self.scenario_database[i][cav_id] = OrderedDict()
-
-                cav_path = os.path.join(scenario_folder, cav_id)
-
-                if j==0: # ego
-                    timestamps = regular_timestamps
-                else:
-                    timestamps = list(time_annotations[j-1, :])
-
-                for timestamp in timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id][timestamp]['lidar'] = \
-                        lidar_file
-                    # self.scenario_database[i][cav_id][timestamp]['camera0'] = \
-                        # camera_files
-                
-                # regular的timestamps 用于做 curr 真实时刻的ground truth
-                self.scenario_database[i][cav_id]['regular'] = OrderedDict()
-                for timestamp in regular_timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id]['regular'][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['lidar'] = \
-                        lidar_file
-
-                # Assume all cavs will have the same timestamps length. Thus
-                # we only need to calculate for the first vehicle in the
-                # scene.
-                if j == 0:  # ego 
-                    # we regard the agent with the minimum id as the ego
-                    self.scenario_database[i][cav_id]['ego'] = True
-                    # num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
-                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k
-                    if not self.len_record:
-                        self.len_record.append(num_ego_timestamps)
-                    else:
-                        prev_last = self.len_record[-1]
-                        self.len_record.append(prev_last + num_ego_timestamps)
-                else:
-                    self.scenario_database[i][cav_id]['ego'] = False
-                    
-
-        # if project first, cav's lidar will first be projected to
-        # the ego's coordinate frame. otherwise, the feature will be
-        # projected instead. 
-        self.pre_processor = build_preprocessor(params['preprocess'],
-                                                train)
-        self.post_processor = post_processor.build_postprocessor(
-            params['postprocess'],
-            train)
-
-        self.anchor_box = self.post_processor.generate_anchor_box()
-
-        print("=== OPV2V-Irregular Multi-sweep dataset with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
-
-    def extract_timestamps(self, yaml_files):
-        """
-        Given the list of the yaml files, extract the mocked timestamps.
-
-        Parameters
-        ----------
-        yaml_files : list
-            The full path of all yaml files of ego vehicle
-
-        Returns
-        -------
-        timestamps : list
-            The list containing timestamps only.
-        """
-        timestamps = []
-
-        for file in yaml_files:
-            res = file.split('/')[-1]
-            if res.endswith('.yaml'):
-                timestamp = res.replace('.yaml', '')
-            elif res.endswith('.json'):
-                timestamp = res.replace('.json', '')
-            else:
-                print("Woops! There is no processing method for file {}".format(res))
-                sys.exit(1)
-            timestamps.append(timestamp)
-
-        return timestamps
+        super(IntermediateFusionDatasetIrregularCompensation, self).__init__(params, visualize, train)
+        self.k = self.k + 1 # 用来在 past_k 中添加 current frame
+        print("=== OPV2V-Irregular Multi-sweep dataloader (Compensation Ver.) for intermediate fusion with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k-1, self.binomial_n * self.binomial_p, self.len_record[-1]))
 
     def retrieve_base_data(self, idx):
         """
@@ -300,16 +71,16 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         'timestamp': string
                     },
                     past_k : {		                # (k) totally
-                        [0]:{
+                        [0]:{                       # current
                             'params': (yaml),
                             'lidar_np': (numpy),
                             'timestamp': string,
                             'time_diff': float,
                             'sample_interval': int
                         },
-                        [1] : {},	(id-1)
+                        [1] : {},	(id-1)          # past 1
                         ...,		
-                        [k-1] : {} (id-(k-1))
+                        [k] : {} (id-(k-1))         # past k
                     },
                     'debug' : {                     # debug use
                         scene_name : string         
@@ -333,7 +104,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                             'sample_interval': int
                         }			
                         ..., 	
-                        [k-1]:{}  (id-\tau-(k-1))
+                        [k] : {}
                     },
                     'debug' : {                     # debug use
                         scene_name : string         
@@ -358,7 +129,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
         curr_timestamp_idx = idx if scenario_index == 0 else \
                         idx - self.len_record[scenario_index - 1]
-        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * (self.k-1)
         
         # load files for all CAVs
         for cav_id, cav_content in scenario_database.items():
@@ -392,11 +163,15 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             # 2. current frame, for co-perception lable use
             data[cav_id]['curr'] = {}
 
-            timestamp_key = list(cav_content['regular'].items())[curr_timestamp_idx][0]
+            try:
+                timestamp_key = list(cav_content['regular'].items())[curr_timestamp_idx][0]
+            except IndexError:
+                print('IndexError!!!')
             
             # 2.1 load curr params
             # json is faster than yaml
             json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
+            # TODO: uncomment code, use updated gt
             json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
             # time_new = str( '%06d' % int(float(timestamp_key))) # TODO: debug用 使用regular的GT
@@ -451,27 +226,26 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             latest_sample_stamp_idx = curr_timestamp_idx
             # past k frames, pose | lidar | label(for single view confidence map generator use)
             for i in range(self.k):
+                if i == 0: # ego-past-0 与 ego-curr 是一样的
+                    data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                    continue
                 # sample_interval
-                if data[cav_id]['ego']:             # ego sample_interval = E(B(n, p))
-                    if i == 0: # ego-past-0 与 ego-curr 是一样的
-                        data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                        continue
-                    sample_inverval = self.sample_interval_exp
+                if data[cav_id]['ego']:             # ego: do not need past frame
+                    break
+                    # sample_inverval = self.sample_interval_exp
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # if i == 0: # TODO: ego-past-0 与 ego-curr 是一样的, debug use, for no shift
-                    #     data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                    #     continue
                     # B(n, p)
                     trails = bernoulliDist.rvs(self.binomial_n)
                     sample_inverval = sum(trails)
 
                 # check the timestamp index
-                data[cav_id]['past_k'][i] = OrderedDict()
+                data[cav_id]['past_k'][i] = {}
                 latest_sample_stamp_idx -= sample_inverval
                 timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0]
                 # load the corresponding data into the dictionary
                 # load param file: json is faster than yaml
                 json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
+                # TODO: uncomment code, use updated gt
                 json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
                 if os.path.exists(json_file):
@@ -483,7 +257,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 # 没有 lidar pose
                 if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
                     tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
-                    tmp_ego_pose += np.array([0.5, 0, 1.9, 0, 0, 0]) # TODO:
+                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0]) # TODO:
                     data[cav_id]['past_k'][i]['params']['lidar_pose'] = list(tmp_ego_pose)
 
                 # load lidar file: npy is faster than pcd
@@ -543,24 +317,45 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                     'lidar_np': (numpy),
                     'timestamp': string
                 },
+                past_k : {		                # (1) totally
+                    [0]:{                       # current
+                        'params': (yaml),
+                        'lidar_np': (numpy),
+                        'timestamp': string,
+                        'time_diff': float,
+                        'sample_interval': int
+                    }
+                },
+                'debug' : {                     # debug use
+                    scene_name : string         
+                    cav_id : string
+                }
+                
+            }, 
+            cav_id_2 : {
+                'ego' : false,
+                curr : {
+                    'params': (yaml),
+                    'lidar_np': (numpy),
+                    'timestamp': string
+                },
                 past_k : {		                # (k) totally
-                    [0]:{
+                    [0]:{                       # current
                         'params': (yaml),
                         'lidar_np': (numpy),
                         'timestamp': string,
                         'time_diff': float,
                         'sample_interval': int
                     },
-                    [1] : {},	(id-1)
-                    ...,		
-                    [k-1] : {} (id-(k-1))
+                    [1] : {},	(id-1)          # past 1
+                    ...,		                # ...
+                    [k] : {} (id-(k-1))         # past k
                 },
                 'debug' : {                     # debug use
                     scene_name : string         
                     cav_id : string
                 }
-            },
-            cav_id_2 : { ... }
+            }
         }
         '''
 
@@ -588,13 +383,14 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         for cav_id, selected_cav_base in base_data_dict.items():
             # check if the cav is within the communication range with ego
             # for non-ego cav, we use the latest frame's pose
-            distance = math.sqrt( \
-                (selected_cav_base['past_k'][0]['params']['lidar_pose'][0] - ego_lidar_pose[0]) ** 2 + \
-                    (selected_cav_base['past_k'][0]['params']['lidar_pose'][1] - ego_lidar_pose[1]) ** 2)
-            # if distance is too far, we will just skip this agent
-            if distance > self.params['comm_range']:
-                too_far.append(cav_id)
-                continue
+            if cav_id != ego_id:
+                distance = math.sqrt( \
+                    (selected_cav_base['past_k'][1]['params']['lidar_pose'][0] - ego_lidar_pose[0]) ** 2 + \
+                        (selected_cav_base['past_k'][1]['params']['lidar_pose'][1] - ego_lidar_pose[1]) ** 2)
+                # if distance is too far, we will just skip this agent
+                if distance > self.params['comm_range']:
+                    too_far.append(cav_id)
+                    continue
             curr_lidar_pose_list.append(selected_cav_base['curr']['params']['lidar_pose']) # 6dof pose
             cav_id_list.append(cav_id)  
         for cav_id in too_far: # filter those out of communicate range
@@ -621,23 +417,23 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             selected_cav_base = base_data_dict[cav_id]
             ''' selected_cav_base:
             {
-                'ego' : true,
+                'ego' : true / false , 
                 curr : {
                     'params': (yaml),
                     'lidar_np': (numpy),
                     'timestamp': string
                 },
-                past_k : {		                # (k) totally
-                    [0]:{
+                past_k : {		                # (1 / k) totally
+                    [0]:{                       # current
                         'params': (yaml),
                         'lidar_np': (numpy),
                         'timestamp': string,
                         'time_diff': float,
                         'sample_interval': int
                     },
-                    [1] : {},	(id-1)
-                    ...,		
-                    [k-1] : {} (id-(k-1))
+                    [1] : {},	(id-1)          # past 1 
+                    ...,		                # ...
+                    [k] : {} (id-(k-1))         # past k
                 },
                 'debug' : {                     # debug use
                     scene_name : string         
@@ -693,15 +489,15 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
 
             # current pose: N, 6
             curr_pose_stack.append(selected_cav_processed['curr_pose']) 
-            # features: N, k, 
+            # features: N, k+1, 
             past_k_features_stack.append(selected_cav_processed['past_k_features'])
-            # poses: N, k, 6
-            past_k_pose_stack.append(selected_cav_processed['past_k_poses'])
-            # time differences: N, k
+            # poses: N, k+1, 6
+            past_k_pose_stack += selected_cav_processed['past_k_poses']
+            # time differences: Nx(k+1)
             past_k_time_diffs_stack += selected_cav_processed['past_k_time_diffs']
-            # sample intervals: N, k
+            # sample intervals: Nx(k+1)
             past_k_sample_interval_stack += selected_cav_processed['past_k_sample_interval']
-            # past k frames to ego pose trans matrix, list of len=N, past_k_tr_mats[i]: ndarray(k, 4, 4)
+            # past k frames to ego pose trans matrix, list of len=N, past_k_tr_mats[i]: ndarray(k+1, 4, 4)
             past_k_tr_mats.append(selected_cav_processed['past_k_tr_mats'])
             # past k label dict: N, k, object_num, 7
             # past_k_label_dicts_stack.append(selected_cav_processed['past_k_label_dicts'])
@@ -724,10 +520,10 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         
         pairwise_t_matrix = \
             self.get_past_k_pairwise_transformation2ego(base_data_dict, 
-            ego_lidar_pose, self.max_cav) # np.tile(np.eye(4), (max_cav, self.k, 1, 1)) (L, k, 4, 4) TODO: 这里面没有搞懂为什么不用 past_k_tr_mats
+            ego_lidar_pose, self.max_cav) # np.tile(np.eye(4), (max_cav, self.k, 1, 1)) (L, k, 4, 4) 
 
         curr_lidar_poses = np.array(curr_pose_stack).reshape(-1, 6)  # (N_cav, 6)
-        past_k_lidar_poses = np.array(past_k_pose_stack).reshape(-1, self.k, 6)  # (N, k, 6)
+        past_k_lidar_poses = np.array(past_k_pose_stack).reshape(-1, 6)  # (Nx(k-1)+1, 6)
 
         # exclude all repetitive objects    
         unique_indices = \
@@ -802,7 +598,6 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 np.vstack(projected_lidar_stack)})
 
         return processed_data_dict
-
 
     def get_item_single_car(self, selected_cav_base, ego_pose, idx):
         """
@@ -903,8 +698,12 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         # 判断点的数量是否合法
         if_no_point = False
 
+        if selected_cav_base['ego']:
+            k = 1
+        else:
+            k = self.k
         # past k frames [trans matrix], [lidar feature], [pose], [time interval]
-        for i in range(self.k):
+        for i in range(k):
             # 1. trans matrix
             transformation_matrix = \
                 x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray
@@ -991,47 +790,6 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
 
         return selected_cav_processed
 
-    @staticmethod
-    def return_timestamp_key_async(cav_content, timestamp_index):
-        """
-        Given the timestamp index, return the correct timestamp key, e.g.
-        2 --> '000078'.
-
-        Parameters
-        ----------
-        scenario_database : OrderedDict
-            The dictionary contains all contents in the current scenario.
-
-        timestamp_index : int
-            The index for timestamp.
-
-        Returns
-        -------
-        timestamp_key : str
-            The timestamp key saved in the cav dictionary.
-        """
-        # retrieve the correct index
-        timestamp_key = list(cav_content.items())[timestamp_index][0]
-
-        return timestamp_key
-
-    @staticmethod
-    def dist_time(ts1, ts2, i = -1):
-        """caculate the time interval between two timestamps
-
-        Args:
-            ts1 (string): time stamp at some time
-            ts2 (string): current time stamp
-            i (int, optional): past frame id, for debug use. Defaults to -1.
-        
-        Returns:
-            time_diff (float): time interval (ts1 - ts2)
-        """
-        if not i==-1:
-            return -i
-        else:
-            return (float(ts1) - float(ts2))
-
     def merge_past_k_features_to_dict(self, processed_feature_list):
         """
         Merge the preprocessed features from different cavs to the same
@@ -1052,7 +810,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         merged_feature_dict = OrderedDict()
 
         for cav_id in range(len(processed_feature_list)):
-            for time_id in range(self.k):
+            for time_id in range(len(processed_feature_list[cav_id])):
                 for feature_name, feature in processed_feature_list[cav_id][time_id].items():
                     if feature_name not in merged_feature_dict:
                         merged_feature_dict[feature_name] = []
@@ -1062,35 +820,6 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         merged_feature_dict[feature_name].append(feature) # merged_feature_dict['coords'] = [f1,f2,f3,f4]
         return merged_feature_dict
 
-    @staticmethod
-    def merge_features_to_dict(processed_feature_list):
-        """
-        Merge the preprocessed features from different cavs to the same
-        dictionary.
-
-        Parameters
-        ----------
-        processed_feature_list : list
-            A list of dictionary containing all processed features from
-            different cavs.
-
-        Returns
-        -------
-        merged_feature_dict: dict
-            key: feature names, value: list of features.
-        """
-
-        merged_feature_dict = OrderedDict()
-
-        for i in range(len(processed_feature_list)):
-            for feature_name, feature in processed_feature_list[i].items():
-                if feature_name not in merged_feature_dict:
-                    merged_feature_dict[feature_name] = []
-                if isinstance(feature, list):
-                    merged_feature_dict[feature_name] += feature
-                else:
-                    merged_feature_dict[feature_name].append(feature) # merged_feature_dict['coords'] = [f1,f2,f3,f4]
-        return merged_feature_dict
 
     def collate_batch_train(self, batch):
         '''
@@ -1098,22 +827,23 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         ----------
         batch[i]['ego'] structure:
         {   
-            'single_object_dict_stack': single_label_dict_stack,
-            'curr_processed_lidar': merged_curr_feature_dict,
-            'object_bbx_center': object_bbx_center,
-            'object_bbx_mask': mask,
-            'object_ids': [object_id_stack[i] for i in unique_indices],
-            'anchor_box': anchor_box,
-            'processed_lidar': merged_feature_dict,
-            'label_dict': label_dict,
-            'cav_num': cav_num,
-            'pairwise_t_matrix': pairwise_t_matrix,
-            'curr_lidar_poses': curr_lidar_poses,
-            'past_k_lidar_poses': past_k_lidar_poses,
-            'sample_idx': idx,
-            'cav_id_list': cav_id_list,
-            'past_k_time_diffs': past_k_time_diffs_stack, 
-                list of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
+            'single_object_label':          single_label_dict_stack,
+            'curr_processed_lidar':         merged_curr_feature_dict,
+            'object_bbx_center':            object_bbx_center,
+            'object_bbx_mask':              mask,
+            # 'anchor_box':                   anchor_box,
+            'processed_lidar':              merged_feature_dict,
+            'label_dict':                   label_dict,
+            'object_ids':                   [object_id_stack[i] for i in unique_indices],
+            'single_past_dict':             
+            'pairwise_t_matrix':            pairwise_t_matrix,
+            'cav_num':                      cav_num,
+            'curr_lidar_poses':             curr_lidar_poses,
+            'past_lidar_poses':             past_k_lidar_poses,
+            'past_k_time_interval':         
+            'past_k_sample_interval':   
+            'avg_sample_interval': , 
+            'avg_time_delay':   
         }
         '''
         for i in range(len(batch)):
@@ -1168,7 +898,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             object_bbx_mask.append(ego_dict['object_bbx_mask'])
             object_ids.append(ego_dict['object_ids'])
             curr_lidar_pose_list.append(ego_dict['curr_lidar_poses']) # ego_dict['curr_lidar_pose'] is np.ndarray [N,6]
-            past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [N,k,6]
+            past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [(N-1)xk+1,6]
             past_k_time_diff.append(ego_dict['past_k_time_diffs']) # ego_dict['past_k_time_diffs'] is np.array(), len=nxk
             past_k_sample_inverval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
             past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
@@ -1201,7 +931,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         # collate past k sample interval from different batch, (B, )
         past_k_sample_inverval = np.hstack(past_k_sample_inverval)
         past_k_sample_inverval = torch.from_numpy(past_k_sample_inverval)
-
+        # TODO: 计算方式需要重新改一下
         past_k_avg_sample_interval = np.array(past_k_avg_sample_interval)
         avg_sample_interval = float(sum(past_k_avg_sample_interval) / len(past_k_avg_sample_interval))
 
@@ -1419,6 +1149,9 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             for cav_id, cav_content in base_data_dict.items():
                 past_k_poses = []
                 for time_id in range(self.k):
+                    if cav_content['ego']:
+                        past_k_poses.append(x_to_world(cav_content['past_k'][0]['params']['lidar_pose']))
+                        continue
                     past_k_poses.append(x_to_world(cav_content['past_k'][time_id]['params']['lidar_pose']))
                 t_list.append(past_k_poses) # Twx
             

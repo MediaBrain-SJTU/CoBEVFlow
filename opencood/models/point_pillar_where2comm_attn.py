@@ -16,6 +16,7 @@ from opencood.models.sub_modules.naive_compress import NaiveCompressor
 # from opencood.models.fuse_modules.where2comm import Where2comm
 from opencood.models.fuse_modules.where2comm_attn import Where2comm
 from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
+from opencood.models.fuse_modules.raindrop_attn_compensation import raindrop_fuse_compensation
 import torch
 
 class PointPillarWhere2commAttn(nn.Module):
@@ -59,7 +60,12 @@ class PointPillarWhere2commAttn(nn.Module):
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
-        self.rain_fusion = raindrop_fuse(args['rain_model'])
+        if 'with_compensation' in args and args['with_compensation']:
+            self.compensation = True
+            self.rain_fusion = raindrop_fuse_compensation(args['rain_model'])
+        else: 
+            self.compensation = False
+            self.rain_fusion = raindrop_fuse(args['rain_model'])
         self.multi_scale = args['rain_model']['multi_scale']
         
         if self.shrink_flag:
@@ -114,10 +120,10 @@ class PointPillarWhere2commAttn(nn.Module):
         record_frames = data_dict['past_k_time_interval']                       #(B, )
         pairwise_t_matrix = data_dict['pairwise_t_matrix']                      #(B, L, k, 4, 4)
         
-        debug = 0
+        # debug = 0
         B, _, k, _, _ = pairwise_t_matrix.shape
-        for i in range(B):
-            debug += record_len[i]*k
+        # for i in range(B):
+        #     debug += record_len[i]*k
 
         batch_dict = {'voxel_features': voxel_features,
                       'voxel_coords': voxel_coords,
@@ -149,16 +155,28 @@ class PointPillarWhere2commAttn(nn.Module):
 
         # rain attention:
         if self.multi_scale:
-            fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+            if self.compensation:
+                fused_feature,fused_feature_curr,fused_feature_latency, communication_rates, all_recon_loss, result_dict = self.rain_fusion(batch_dict['spatial_features'],
                                                 psm_single,
                                                 record_len,
                                                 pairwise_t_matrix, 
                                                 record_frames,
                                                 self.backbone,
                                                 [self.shrink_conv, self.cls_head, self.reg_head])
+            else: 
+                fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                    psm_single,
+                    record_len,
+                    pairwise_t_matrix, 
+                    record_frames,
+                    self.backbone,
+                    [self.shrink_conv, self.cls_head, self.reg_head])
             # downsample feature to reduce memory
             if self.shrink_flag:
                 fused_feature = self.shrink_conv(fused_feature)
+                if self.compensation:
+                    fused_feature_curr = self.shrink_conv(fused_feature_curr)
+                    fused_feature_latency = self.shrink_conv(fused_feature_latency)
         else:
             fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
                                             psm_single,
@@ -187,58 +205,75 @@ class PointPillarWhere2commAttn(nn.Module):
         # print('fused_feature: ', fused_feature.shape)
         psm = self.cls_head(fused_feature)
         rm = self.reg_head(fused_feature)
-
+        
+        # fuse 之后的 feature (ego)
         output_dict = {'psm': psm,
-                       'rm': rm
-                       }
-        output_dict.update(result_dict)
-        
-        voxel_features = data_dict['curr_processed_lidar']['voxel_features']         #(M, 32, 4)
-        voxel_coords = data_dict['curr_processed_lidar']['voxel_coords']             #(M, 4)
-        voxel_num_points = data_dict['curr_processed_lidar']['voxel_num_points']     #(M, )
-        record_len = data_dict['record_len']                  
-        
-        batch_single_dict = {'voxel_features': voxel_features,
-                            'voxel_coords': voxel_coords,
-                            'voxel_num_points': voxel_num_points,
-                            'record_len': record_len}
-        # n, 4 -> n, c  ('pillar_features')
-        batch_single_dict = self.pillar_vfe(batch_single_dict)
-        # (n, c) -> (batch_cav_size, C, H, W) put pillars into spatial feature map ('spatial_features')
-        batch_single_dict = self.scatter(batch_single_dict)
-        batch_single_dict = self.backbone(batch_single_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
-        # N, C, H', W'. [N, 384, 100, 252]
-        single_spatial_features_2d = batch_dict['spatial_features_2d']
-        
-        # downsample feature to reduce memory
-        if self.shrink_flag:
-            single_spatial_features_2d = self.shrink_conv(single_spatial_features_2d)  # (B, 256, H', W')
-        # compressor
-        if self.compression:
-            single_spatial_features_2d = self.naive_compressor(single_spatial_features_2d)
-        # [B, 256, 50, 176]
-        psm_single = self.cls_head(single_spatial_features_2d)
-        rm_single = self.reg_head(single_spatial_features_2d)
+                       'rm': rm}
 
-        split_psm_single = self.regroup(psm_single, record_len)
-        split_rm_single = self.regroup(rm_single, record_len)
-        psm_single_v = []
-        psm_single_i = []
-        rm_single_v = []
-        rm_single_i = []
-        for b in range(len(split_psm_single)):
-            psm_single_v.append(split_psm_single[b][0:1])
-            psm_single_i.append(split_psm_single[b][1:2])
-            rm_single_v.append(split_rm_single[b][0:1])
-            rm_single_i.append(split_rm_single[b][1:2])
-        psm_single_v = torch.cat(psm_single_v, dim=0)
-        psm_single_i = torch.cat(psm_single_i, dim=0)
-        rm_single_v = torch.cat(rm_single_v, dim=0)
-        rm_single_i = torch.cat(rm_single_i, dim=0)
-        output_dict.update({'psm_single_v': psm_single_v,
-                       'psm_single_i': psm_single_i,
-                       'rm_single_v': rm_single_v,
-                       'rm_single_i': rm_single_i,
-                       'comm_rate': communication_rates
-                       })
+        if self.compensation:
+            psm_curr = self.cls_head(fused_feature_curr)
+            rm_curr = self.reg_head(fused_feature_curr)
+
+            psm_latency = self.cls_head(fused_feature_latency)
+            rm_latency = self.reg_head(fused_feature_latency)
+            output_dict.update({
+                'psm_curr': psm_curr,
+                'rm_curr': rm_curr,
+                'psm_latency': psm_latency,
+                'rm_latency': rm_latency,
+                'recon_loss': all_recon_loss
+            })
+
+        output_dict.update(result_dict)  # TODO: 这个现在是空字典  
+        
+        # voxel_features = data_dict['curr_processed_lidar']['voxel_features']         #(M, 32, 4)
+        # voxel_coords = data_dict['curr_processed_lidar']['voxel_coords']             #(M, 4)
+        # voxel_num_points = data_dict['curr_processed_lidar']['voxel_num_points']     #(M, )
+        # record_len = data_dict['record_len']                  
+        
+        # batch_single_dict = {'voxel_features': voxel_features,
+        #                     'voxel_coords': voxel_coords,
+        #                     'voxel_num_points': voxel_num_points,
+        #                     'record_len': record_len}
+        
+        # # n, 4 -> n, c  ('pillar_features')
+        # batch_single_dict = self.pillar_vfe(batch_single_dict)
+        # # (n, c) -> (batch_cav_size, C, H, W) put pillars into spatial feature map ('spatial_features')
+        # batch_single_dict = self.scatter(batch_single_dict)
+        # batch_single_dict = self.backbone(batch_single_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
+        # # N, C, H', W'. [N, 384, 100, 252]
+        # single_spatial_features_2d = batch_dict['spatial_features_2d']
+        
+        # # downsample feature to reduce memory
+        # if self.shrink_flag:
+        #     single_spatial_features_2d = self.shrink_conv(single_spatial_features_2d)  # (B, 256, H', W')
+        # # compressor
+        # if self.compression:
+        #     single_spatial_features_2d = self.naive_compressor(single_spatial_features_2d)
+        # # [B, 256, 50, 176]
+        # psm_single = self.cls_head(single_spatial_features_2d)
+        # rm_single = self.reg_head(single_spatial_features_2d)
+
+        # split_psm_single = self.regroup(psm_single, record_len)
+        # split_rm_single = self.regroup(rm_single, record_len)
+        # psm_single_v = []
+        # psm_single_i = []
+        # rm_single_v = []
+        # rm_single_i = []
+        # for b in range(len(split_psm_single)):
+        #     psm_single_v.append(split_psm_single[b][0:1])
+        #     psm_single_i.append(split_psm_single[b][1:2])
+        #     rm_single_v.append(split_rm_single[b][0:1])
+        #     rm_single_i.append(split_rm_single[b][1:2])
+        # psm_single_v = torch.cat(psm_single_v, dim=0)
+        # psm_single_i = torch.cat(psm_single_i, dim=0)
+        # rm_single_v = torch.cat(rm_single_v, dim=0)
+        # rm_single_i = torch.cat(rm_single_i, dim=0)
+        # output_dict.update({'psm_single_v': psm_single_v,
+        #                'psm_single_i': psm_single_i,
+        #                'rm_single_v': rm_single_v,
+        #                'rm_single_i': rm_single_i,
+        #                'comm_rate': communication_rates
+        #                })
+
         return output_dict

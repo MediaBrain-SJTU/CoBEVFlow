@@ -169,9 +169,11 @@ if __name__ == "__main__":
     # create_small_dataset(split_name='train')
 
     root_dirs = "/DB/data/sizhewei/logs"
-    save_path = './opencood/result.jpg'
+    note = 'ir_in_ir_gt_update'
+    save_path = f"./opencood/result_{note}.jpg"
+    title = "Iregular data, random sample intervals."
     
-    split_list = ['where2comm_irregular', 'latefusion_irregular']
+    split_list = ['where2comm_irregular', 'latefusion_irregular'] # , 'latefusion_irregular'
     single_split_name = 'single_irregular'
 
     num_delay = 10
@@ -179,6 +181,7 @@ if __name__ == "__main__":
     max_x = 1000 # unit is ms
     plt.figure()
     fig, ax = plt.subplots(3,1, sharex='col', sharey=False, figsize=(6,9))
+    fig.suptitle(f'{title}', fontsize='x-large', y=0.94)
     fig.text(0.5, 0.06, '# Avg. time delay (ms)', ha='center', fontsize='x-large')
     fig.text(0.06, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
     ax30 = ax[0]; ax50 = ax[1]; ax70 = ax[2]
@@ -188,7 +191,7 @@ if __name__ == "__main__":
         delays = []
         for i in trange(num_delay+1):
             log_file = split_name + '_d_' + str(i)
-            eval_file = os.path.join(root_dirs, log_file, "eval_no_noise_ir_in_ir_gt_update.yaml")
+            eval_file = os.path.join(root_dirs, log_file, f"eval_no_noise_{note}.yaml")
             tmp_aps = []
             with open(eval_file, "r", encoding="utf-8") as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
@@ -217,7 +220,7 @@ if __name__ == "__main__":
     
     # for single fusion
     method_name = single_split_name.split('_')[0]
-    eval_file = os.path.join(root_dirs, single_split_name, 'eval_no_noise_ir_in_ir_gt_update.yaml')
+    eval_file = os.path.join(root_dirs, single_split_name, f'eval_no_noise_{note}.yaml')
     with open(eval_file, "r", encoding="utf-8") as f:
         data = yaml.load(f, Loader=yaml.FullLoader)
     plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], 'r--', label=method_name + '_' + 'ap30')

@@ -19,6 +19,8 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_delay import 
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_multisweep import IntermediateFusionDatasetDAIRMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_multisweep import IntermediateFusionDatasetMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import IntermediateFusionDatasetIrregular
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_compensation import IntermediateFusionDatasetIrregularCompensation
+from opencood.data_utils.datasets.late_fusion_dataset_opv2v_regular import LateFusionDatasetRegular
 from opencood.data_utils.datasets.late_fusion_dataset_opv2v_irregular import LateFusionDatasetIrregular
 
 __all__ = {
@@ -38,6 +40,8 @@ __all__ = {
     'IntermediateFusionDatasetDAIRAsync': IntermediateFusionDatasetDAIRAsync,
     'IntermediateFusionDatasetMultisweep': IntermediateFusionDatasetMultisweep,
     'IntermediateFusionDatasetIrregular': IntermediateFusionDatasetIrregular,
+    'IntermediateFusionDatasetIrregularCompensation': IntermediateFusionDatasetIrregularCompensation,
+    'LateFusionDatasetRegular': LateFusionDatasetRegular,
     'LateFusionDatasetIrregular': LateFusionDatasetIrregular
 }
 

@@ -1,4 +1,5 @@
-name: pointpillar_irr_no_shift_pretrain
+name: opv2v_npj_raindrop_attn
+
 
 root_dir: "/DB/public/OPV2V_irregular_npy/train/"
 validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
@@ -13,17 +14,17 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 1
+num_sweep_frames: &past_k 3
 # time_delay: 0
 
 binomial_n: 10
-binomial_p: 0
+binomial_p: 0.5
 
 is_single_pre_trained:
-  pre_train_flag: False
-  # pre_train_fix: false
-  # pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
-  # pre_train_epoch: 24
+  pre_train_flag: True
+  pre_train_fix: true
+  pre_train_path: '/GPFS/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26'
+  pre_train_epoch: 17
 
 comm_range: 1000
 
@@ -31,12 +32,12 @@ yaml_parser: "load_point_pillar_params"
 train_params:
   batch_size: &batch_size 1 # TODO: 调整batch_size
   epoches: 20
-  eval_freq: 1
-  save_freq: 1
+  eval_freq: 2
+  save_freq: 2
   max_cav: &max_cav 5
 
 fusion:
-  core_method: 'IntermediateFusionDatasetIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
+  core_method: 'IntermediateFusionDatasetIrregularCompensation' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
   args:
     proj_first: false
     clip_pc: false
@@ -70,8 +71,8 @@ postprocess:
   gt_range: *cav_lidar
   anchor_args:
     cav_lidar_range: *cav_lidar
-    l: 3.9
-    w: 1.6
+    l: 4.5
+    w: 2
     h: 1.56
     r: [0, 90]
     feature_stride: 2
@@ -129,7 +130,7 @@ model:
     #   padding: [1]
     #   kernel_size : [3]
     #   n_blocks: 1
-
+    with_compensation: True
     rain_model:
       d_ff: 256
       h: 8
@@ -144,15 +145,20 @@ model:
       only_attention: true
       fusion_setting:
         sweep_length: *past_k
+        if_max_aggre: False
+        if_conv_aggre: False
         if_spatial_encoding : False
-        if_ego_time_encoding : false
-        if_nonego_time_encoding : true
+        if_ego_time_encoding : True
+        if_nonego_time_encoding : False
         if_sensor_encoding : False
-        if_time_attn_aggre : true
-        if_spatial_conv : False
-        if_dotproductattn : True
-        use_mask : True
+        if_time_attn_aggre : True
+        if_spatial_conv : True
+        if_dotproductattn : False
+        use_mask : False
         confidence_fetch : false
+        if_swin_trans: True
+        sup_individual: True
+        dilation_size: 7 # 必须是奇数
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
@@ -161,13 +167,34 @@ model:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
-        mode: 'MAX' # MAX or RAIN
+        mode: 'RAIN' # MAX or RAIN
       multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 
+    # fusion_args:
+    #   voxel_size: *voxel_size
+    #   downsample_rate: 1
+    #   in_channels: 256
+    #   n_head: 8
+    #   dropout_rate: 0
+    #   only_attention: true
+    #   communication:
+    #     round: 1
+    #     thre: 0.01
+    #     gaussian_smooth:
+    #       k_size: 5
+    #       c_sigma: 1.0
+    #   agg_operator:
+    #     mode: 'MAX'
+    #     feature_dim: 256
+    #   multi_scale: true
+    #   layer_nums: *layer_nums
+    #   num_filters: *num_filters
+
+
 loss:
-  core_method: point_pillar_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0

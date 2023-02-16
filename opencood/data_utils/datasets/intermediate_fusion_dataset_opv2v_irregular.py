@@ -396,7 +396,8 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
             json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
-            # time_new = str( '%06d' % int(float(timestamp_key))) # TODO: debug用 使用regular的GT
+            # TODO: debug use, uncomment: to use regular version yaml GT
+            # time_new = str( '%06d' % int(float(timestamp_key)))
             # json_file = json_file.replace('OPV2V_irregular_npy','OPV2V_w_npy')
             # json_file = json_file.replace(timestamp_key, time_new)
 
@@ -416,14 +417,15 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             # 没有 lidar pose
             if not ('lidar_pose' in data[cav_id]['curr']['params']):
                 tmp_ego_pose = np.array(data[cav_id]['curr']['params']['true_ego_pos'])
-                tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0]) # TODO:
+                tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
                 data[cav_id]['curr']['params']['lidar_pose'] = list(tmp_ego_pose)
 
             # 2.2 load curr lidar file
             # npy is faster than pcd
             npy_file = cav_content['regular'][timestamp_key]['lidar'].replace("pcd", "npy")
             
-            # time_new = str( '%06d' % int(float(timestamp_key))) # TODO: debug用 使用regular的lidar
+            # TODO: debug use, uncomment: to use regular version lidar input
+            # time_new = str( '%06d' % int(float(timestamp_key))) 
             # npy_file = npy_file.replace('OPV2V_irregular_npy','OPV2V_w_npy')
             # npy_file = npy_file.replace(timestamp_key, time_new)
 
@@ -455,12 +457,16 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         continue
                     sample_inverval = self.sample_interval_exp
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # if i == 0: # TODO: ego-past-0 与 ego-curr 是一样的, debug use, for no shift
-                    #     data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                    #     continue
+                    # TODO: debug use, uncomment: past-0 = curr, for no shift
+                    if i == 0: 
+                        data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                        continue
                     # B(n, p)
                     trails = bernoulliDist.rvs(self.binomial_n)
                     sample_inverval = sum(trails)
+
+                    # TODO: debug use, uncomment: 同一个sample中delay完全一致、不同sample的采样间隔一致
+                    sample_inverval = self.sample_interval_exp
 
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = OrderedDict()
@@ -480,7 +486,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 # 没有 lidar pose
                 if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
                     tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
-                    tmp_ego_pose += np.array([0.5, 0, 1.9, 0, 0, 0]) # TODO:
+                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
                     data[cav_id]['past_k'][i]['params']['lidar_pose'] = list(tmp_ego_pose)
 
                 # load lidar file: npy is faster than pcd
@@ -651,7 +657,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             The dictionary contains the cav's processed information.
             {
                 'projected_lidar':      # curr lidar in ego space, 用于viz
-                'single_label_dict':	# single view label. 没有经过坐标变换,                      cav view + curr 的label
+                'single_label_dict':	# single view label. 没有经过坐标变换, 用于单体监督            cav view + curr 的label
                 'curr_feature':         # current feature, lidar预处理得到的feature                 cav view + curr feature
                 'object_bbx_center':	# ego view label. np.ndarray. Shape is (max_num, 7).    ego view + curr 的label
                 'object_ids':			# ego view label index. list. length is (max_num, 7).   ego view + curr 的label
