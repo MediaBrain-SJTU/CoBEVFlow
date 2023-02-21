@@ -124,11 +124,11 @@ model:
       n_head: 8
       dropout_rate: 0
       only_attention: true
-      # communication:
-      #   thre: 0.01
-      #   gaussian_smooth:
-      #     k_size: 5
-      #     c_sigma: 1.0
+      communication:
+        thre: 0.01
+        gaussian_smooth:
+          k_size: 5
+          c_sigma: 1.0
       agg_operator:
         mode: 'MAX'
         feature_dim: 256

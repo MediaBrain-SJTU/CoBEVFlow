@@ -211,13 +211,16 @@ def main():
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
     
-    avg_time_delay = -hypes['time_delay']*100 # unit is ms, negative
-    avg_sample_interval = hypes['time_delay']
+    try:
+        avg_sample_interval = hypes['time_delay']
+        avg_time_delay = -avg_sample_interval*100 # unit is ms, negative
+    except:
+        avg_sample_interval = hypes['binomial_p']*hypes['binomial_n']
+        avg_time_delay = -(avg_sample_interval)*100 # unit is ms, negative
+        
     ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note)
-    print("Module with time delay: {}".format(hypes['time_delay']))
-
-
+    print("Module with time delay: {}".format(avg_time_delay))
 
 if __name__ == '__main__':
     main()

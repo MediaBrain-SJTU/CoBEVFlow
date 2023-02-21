@@ -201,7 +201,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             {
                 cav_id_1 : {
                     'ego' : true,
-                    curr : {		(id)			#      |       | label
+                    curr : {		(id)			# pose | lidar | label
                         'params': (yaml),
                         'lidar_np': (numpy),
                         'timestamp': string
@@ -220,7 +220,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 }, 
                 cav_id_2 : {
                     'ego': false, 
-                    curr : 	{		(id)			#      |       | label
+                    curr : 	{		(id)			# pose | lidar | label
                             'params': (yaml),
                             'lidar_np': (numpy),
                             'timestamp': string
@@ -311,7 +311,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = OrderedDict()
                 timestamp_index = idx if scenario_index == 0 else \
-                    idx + i - self.len_record[scenario_index - 1] # TODO: 这里面原来错加了一个i，记得改正
+                    idx - self.len_record[scenario_index - 1] # TODO: 这里面原来错加了一个i，记得改正
                 timestamp_index = timestamp_index + self.k - 1 - i + temp
                 timestamp_key = list(cav_content.items())[timestamp_index][0]
                 # load the corresponding data into the dictionary

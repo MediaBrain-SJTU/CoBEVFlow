@@ -26,8 +26,9 @@ from tqdm.auto import trange
 
 
 run_test = True
-from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import illegal_path_list
-compensation = False 
+# from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import illegal_path_list
+compensation = True 
+
 
 def train_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
@@ -201,7 +202,7 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
-            # if i==1: # TODO: debug 用
+            # if i==0: # TODO: debug 用
             #     break
             if batch_data is None:
                 continue
@@ -218,9 +219,17 @@ def main():
             # becomes a list, which containing all data from other cavs
             # as well
 
-            # end_time = time.time()
-            # time_todevice += (end_time - start_time)
-            # start_time = time.time()
+            # # TODO:
+            # iter_memory = torch.cuda.memory_allocated(device)/1024/1024
+            # memory_holder = torch.zeros((2, 2))
+            # if iter_memory < 20:
+            #     tmp = int((20 - iter_memory)/4)
+            #     a = torch.zeros((1024, 1024, tmp))
+            #     memory_holder = train_utils.to_device(a, device)
+            # print('Memory allocated: %d GB' % int(torch.cuda.memory_allocated()/1024/1024))
+            # print(torch.cuda.memory_reserved())
+
+            # reserved_memory = 
 
             batch_data['ego']['epoch'] = epoch
             # sample_interval += batch_data['ego']['avg_sample_interval'] # debug use 打开
@@ -238,21 +247,28 @@ def main():
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
             
-            if compensation:
-                final_loss = ouput_dict['recon_loss'] 
-                detection_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+            if hypes['model']['args']['with_compensation']:
+                if hypes['model']['args']['with_single_supervise']:
+                    final_loss = ouput_dict['recon_loss'] 
+                    single_det_loss = criterion(ouput_dict, batch_data['ego']['single_object_label'], mode = 'single')
+                    detection_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+                    final_loss = ouput_dict['recon_loss'] + single_det_loss + detection_loss
+                else:
+                    detection_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+                    final_loss = ouput_dict['recon_loss'] + detection_loss
             else:
                 final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
 
             if i%10 == 0:
                 criterion.logging(epoch, i, len(train_loader), writer)
-                # TODO: Uncomment for debug time compensation module
-                if compensation:
-                    curr_loss = criterion(ouput_dict, batch_data['ego']['label_dict'],mode='curr')
-                    latency_loss = criterion(ouput_dict, batch_data['ego']['label_dict'],mode='latency')
-                    print('curr_loss',curr_loss.item())
-                    print('latency_loss',latency_loss.item())
-                    print('recon_loss',ouput_dict['recon_loss'].item())
+                if hypes['model']['args']['with_compensation']:
+                    if hypes['model']['args']['with_single_supervise']:
+                        print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
+                                'single_det: %.4f' % single_det_loss, '||'
+                                'detection: %.4f' % detection_loss)
+                    else:
+                        print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
+                                'detection: %.4f' % detection_loss)
 
             # back-propagation
             final_loss.backward()
@@ -273,10 +289,6 @@ def main():
             print('### %d th epoch trained, start validation! Time consumed %.2f ###' % (epoch, (end_time - start_time)/60))
             with torch.no_grad():
                 for i, batch_data in tenumerate(val_loader):
-                    # TODO: debug use
-                    # print(i)
-                    # if i == 10:
-                    #     break
 
                     if batch_data is None:
                         continue
@@ -295,8 +307,6 @@ def main():
                     final_loss = criterion(ouput_dict,
                                            batch_data['ego']['label_dict'])
                     valid_ave_loss.append(final_loss.item())
-                # TODO: debug use
-                # print(illegal_path_list)
 
             valid_ave_loss = statistics.mean(valid_ave_loss)
             print('At epoch %d, the validation loss is %f' % (epoch,

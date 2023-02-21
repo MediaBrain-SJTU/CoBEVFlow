@@ -95,6 +95,42 @@ class PointPillarTcLoss(nn.Module):
         self.reg_coe = args['reg']
         self.loss_dict = {}
 
+    def delete_ego_label(self, target_dict, record_len):
+        '''
+        将 target_dict 中每一项的ego部分去掉 
+
+        Parameters: 
+        -----------
+        target_dict: dict
+            {
+                'pos_equal_one': # [\sum_{B} N* , H, W, 2]
+                'neg_equal_one': # [\sum_{B} N* , H, W, 2]
+                'targets':       # [\sum_{B} N* , H, W, 14]
+            }
+        record_len: list
+            len = B, 存放每个batch有多少辆车
+
+        Returns:
+        --------
+        updated_dict: dict
+            {
+                'pos_equal_one': # [\sum_{B} n* , H, W, 2]   n* = N* - 1
+                'neg_equal_one': # [\sum_{B} n* , H, W, 2]
+                'targets':       # [\sum_{B} n* , H, W, 14]
+            }
+        '''
+        updated_dict = {}
+
+        split_loc = torch.cumsum(record_len, dim=0)
+        for key, values in target_dict.items():
+            deleted_label = []
+            batch_list = torch.tensor_split(values, split_loc[:-1].cpu())
+            for unit_content in batch_list:
+                deleted_label.append(unit_content[1:])
+            updated_dict[key] = torch.cat(deleted_label, dim=0)
+        return updated_dict
+
+
     def forward(self, output_dict, target_dict, mode=None):
         """
         Parameters
@@ -108,14 +144,18 @@ class PointPillarTcLoss(nn.Module):
         elif mode=='latency':
             rm = output_dict['rm_latency']
             psm = output_dict['psm_latency']
+        elif mode == 'single':
+            psm = output_dict['psm_nonego_single']              # [\sum_{B}n, 2, H, W]
+            rm = output_dict['rm_nonego_single']                # [\sum_{B}n, 14, H, W]
+            target_dict = self.delete_ego_label(target_dict, output_dict['record_len'])
         else:
             rm = output_dict['rm']  # [B, 14, 50, 176]
             psm = output_dict['psm'] # [B, 2, 50, 176]
+
         targets = target_dict['targets']
+        box_cls_labels = target_dict['pos_equal_one']  # [B, 50, 176, 2]
 
         cls_preds = psm.permute(0, 2, 3, 1).contiguous() # N, C, H, W -> N, H, W, C
-
-        box_cls_labels = target_dict['pos_equal_one']  # [B, 50, 176, 2]
         box_cls_labels = box_cls_labels.view(psm.shape[0], -1).contiguous()
 
         positives = box_cls_labels > 0

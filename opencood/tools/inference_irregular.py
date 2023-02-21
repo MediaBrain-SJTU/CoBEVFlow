@@ -25,6 +25,8 @@ from tqdm import tqdm
 from tqdm.contrib import tenumerate
 from tqdm.auto import trange
 
+# from opencood.models.fuse_modules.raindrop_attn_compensation import if_save_pt
+
 def test_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
     parser.add_argument('--model_dir', type=str, required=True,
@@ -37,12 +39,15 @@ def test_parser():
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
-    parser.add_argument('--note', default="ir_in_ir_gt_update", type=str, help='save folder name')
+    parser.add_argument('--note', default="thre=0.07", type=str, help='save folder name')
+    parser.add_argument('--p', default=None, type=float, help='binomial probability')
     opt = parser.parse_args()
     return opt
 
 
 def main():
+    # global if_save_pt
+    # if_save_pt = False
     opt = test_parser()
 
     assert opt.fusion_method in ['late', 'early', 'intermediate', 'no', 'no_w_uncertainty'] 
@@ -52,6 +57,10 @@ def main():
     hypes['validate_dir'] = hypes['test_dir']
     if "OPV2V" in hypes['test_dir'] or "v2xsim" in hypes['test_dir']:
         assert "test" in hypes['validate_dir']
+    
+    # update binomial prob
+    if 'binomial_p' in hypes and opt.p is not None:
+        hypes['binomial_p'] = opt.p
     
     # This is used in visualization
     # left hand: OPV2V
@@ -112,9 +121,9 @@ def main():
     for i, batch_data in tenumerate(data_loader):
         if batch_data is None:
             continue
-        # if i > 100: # TODO: debug use
-        #     break
         with torch.no_grad():
+            # if i < 200:
+            #     continue
             if opt.fusion_method == 'late':
                 unit_time_delay = []
                 unit_sample_interval = []
@@ -185,7 +194,7 @@ def main():
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}')
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%s'%(str(hypes['binomial_p'])))
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -220,7 +229,7 @@ def main():
     avg_time_delay = (avg_time_delay/i) * 50 # unit is ms
     avg_sample_interval /= i
     ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note)
+                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note+'_'+str(hypes['binomial_p']))
     print("Module with sample interval expection: {}".format(hypes['binomial_n']*hypes['binomial_p']))
 
 

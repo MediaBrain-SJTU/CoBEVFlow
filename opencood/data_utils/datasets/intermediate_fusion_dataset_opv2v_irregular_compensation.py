@@ -171,7 +171,6 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
             # 2.1 load curr params
             # json is faster than yaml
             json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
-            # TODO: uncomment code, use updated gt
             json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
             # time_new = str( '%06d' % int(float(timestamp_key))) # TODO: debug用 使用regular的GT
@@ -232,20 +231,25 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
                 # sample_interval
                 if data[cav_id]['ego']:             # ego: do not need past frame
                     break
-                    # sample_inverval = self.sample_interval_exp
+                    # sample_interval = self.sample_interval_exp
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # B(n, p)
-                    trails = bernoulliDist.rvs(self.binomial_n)
-                    sample_inverval = sum(trails)
+                    if self.is_same_sample_interval:
+                        sample_interval = self.sample_interval_exp
+                    else:    
+                        # B(n, p)
+                        trails = bernoulliDist.rvs(self.binomial_n)
+                        sample_interval = sum(trails)
+                    if sample_interval == 0: # 避免加载相同的帧，最差也要向前推进一帧
+                        sample_interval = 1
 
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = {}
-                latest_sample_stamp_idx -= sample_inverval
+                latest_sample_stamp_idx -= sample_interval
                 timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0]
                 # load the corresponding data into the dictionary
                 # load param file: json is faster than yaml
                 json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
-                # TODO: uncomment code, use updated gt
+                # uncomment code, use updated gt
                 json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
                 if os.path.exists(json_file):
@@ -257,7 +261,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
                 # 没有 lidar pose
                 if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
                     tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
-                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0]) # TODO:
+                    tmp_ego_pose += np.array([-0.5, 0, 1.9, 0, 0, 0])
                     data[cav_id]['past_k'][i]['params']['lidar_pose'] = list(tmp_ego_pose)
 
                 # load lidar file: npy is faster than pcd
@@ -269,7 +273,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
                             pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
 
                 data[cav_id]['past_k'][i]['timestamp'] = timestamp_key
-                data[cav_id]['past_k'][i]['sample_interval'] = sample_inverval
+                data[cav_id]['past_k'][i]['sample_interval'] = sample_interval
                 data[cav_id]['past_k'][i]['time_diff'] = \
                     self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp'])
             
@@ -685,7 +689,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
         past_k_poses = []
         # past k timestamps
         past_k_time_diffs = []
-        # past k sample invervals
+        # past k sample intervals
         past_k_sample_interval = []
 
         # for debug use
@@ -871,7 +875,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
         past_k_label_list = []
         # store the time interval of each feature map
         past_k_time_diff = []
-        past_k_sample_inverval = []
+        past_k_sample_interval = []
         past_k_avg_time_delay = []
         past_k_avg_sample_interval = []
         # pairwise transformation matrix
@@ -900,7 +904,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
             curr_lidar_pose_list.append(ego_dict['curr_lidar_poses']) # ego_dict['curr_lidar_pose'] is np.ndarray [N,6]
             past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [(N-1)xk+1,6]
             past_k_time_diff.append(ego_dict['past_k_time_diffs']) # ego_dict['past_k_time_diffs'] is np.array(), len=nxk
-            past_k_sample_inverval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
+            past_k_sample_interval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
             past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
             past_k_avg_time_delay.append(ego_dict['avg_time_delay']) # ego_dict['avg_sample_interval'] is float
             # avg_time_delay += ego_dict['avg_time_delay']
@@ -929,8 +933,8 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
         past_k_time_diff= torch.from_numpy(past_k_time_diff)
 
         # collate past k sample interval from different batch, (B, )
-        past_k_sample_inverval = np.hstack(past_k_sample_inverval)
-        past_k_sample_inverval = torch.from_numpy(past_k_sample_inverval)
+        past_k_sample_interval = np.hstack(past_k_sample_interval)
+        past_k_sample_interval = torch.from_numpy(past_k_sample_interval)
         # TODO: 计算方式需要重新改一下
         past_k_avg_sample_interval = np.array(past_k_avg_sample_interval)
         avg_sample_interval = float(sum(past_k_avg_sample_interval) / len(past_k_avg_sample_interval))
@@ -987,7 +991,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
                                    'curr_lidar_pose': curr_lidar_pose,
                                    'past_lidar_pose': past_k_lidar_pose,
                                    'past_k_time_interval': past_k_time_diff,
-                                   'past_k_sample_inverval': past_k_sample_inverval,
+                                   'past_k_sample_interval': past_k_sample_interval,
                                    'avg_sample_interval': avg_sample_interval,
                                    'avg_time_delay': avg_time_delay})
                                 #    'times': time_consume})

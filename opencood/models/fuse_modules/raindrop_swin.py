@@ -24,6 +24,9 @@ from opencood.models.comm_modules.where2comm_multisweep import Communication
 from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
 
 from opencood.models.fuse_modules.STPT import STPT
+# from opencood.models.fuse_modules.SyncNet import SyncLSTM
+
+if_save_pt = False  # TODO: for debug use, save pt file
 
 def clones(module, N):
     "Produce N identical layers."
@@ -379,7 +382,15 @@ class AttentionFusion(nn.Module):
         self.confidence_fetch = settings['confidence_fetch']
         self.if_conv_aggre = settings['if_conv_aggre']
         self.sup_individual = settings['sup_individual']
-        self.if_swin_trans = settings['if_swin_trans']
+        
+        # self.if_swin_trans = False
+        # self.if_syncnet = False
+        # if settings['compensation_mode'] == 'SWIN':
+        self.if_swin_trans = True
+        # elif settings['compensation_mode'] == 'SYNCNET':
+            # self.if_syncnet = True
+
+        # assert self.if_swin_trans != self.if_syncnet  # 两种补偿模块只能二选一
 
         self.input_dim = input_dim 
         self.hidden_dim = hidden_dim
@@ -423,7 +434,12 @@ class AttentionFusion(nn.Module):
                     embed_dim=48,
                     use_hdmap=False,
                     use_hdmap_feat=False)
-            
+            # elif self.if_syncnet:
+            #     self.syncnet = SyncLSTM(channel_size=self.input_dim,
+            #                             h=self.height,
+            #                             w=self.width, 
+            #                             k=self.sweep_length,
+            #                             TM_Flag=True)
             # self.layers_spatial = Spatial_conv(self.input_dim,self.input_dim,kernel_size=5)
             if self.if_dotproductattn:
                 self.dotproductattn = ScaledDotProductAttention(self.input_dim)
@@ -433,7 +449,7 @@ class AttentionFusion(nn.Module):
         print("================Rain attention Init================")
 
 
-
+    
 
     def forward(self, features, sensor_dist, time_stamps, valid_mask):
         """
@@ -441,7 +457,7 @@ class AttentionFusion(nn.Module):
         -----------
         features: torch.Tensor, shape (B, C, H, W)
             neighbor features in ego view
-            B = \sum_{i}^{num_cav} k_i, num_cav 表示cav数量, k_i 表示对于cav_i 有多少观测帧
+            B : 按照顺序排列: ego[curr], cav_1[curr], cav_1[past_1], ..., cav_2[past_k], ....
             C : feature 维度，一般为 256
             H : height, 一般为 100
             W : width, 一般为 252
@@ -468,65 +484,97 @@ class AttentionFusion(nn.Module):
             return features.squeeze(0)
         if self.confidence_fetch == False:
             if self.sup_individual:
-                curr_features = features[1::self.sweep_length+1].clone()
-                latency_features = features[2::self.sweep_length+1].clone()
+                curr_features = features[1::self.sweep_length+1].clone()    # [n, C, H, W]
+                latency_features = features[2::self.sweep_length+1].clone()  # [n, C, H, W]
                 if self.compensation==False:
                     
                     final_fuse_feature = torch.max(torch.cat((features[:1],curr_features),dim=0),dim=0)[0]
                     final_fuse_feature_latency = torch.max(torch.cat((features[:1],latency_features),dim=0),dim=0)[0]
 
-                    return final_fuse_feature_latency,final_fuse_feature,final_fuse_feature_latency,0
+                    return final_fuse_feature_latency,final_fuse_feature,final_fuse_feature_latency,0,0
 
 
                 cav_num, C, H, W = features.shape
                 individual_recon_loss = 0
+                latency_recon_loss = 0
+                # debug use, set true to save pt for viz
+                
+                if if_save_pt:
+                    torch.save(time_stamps, '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'time_stamps'+'.pt')
+                    torch.save(features[1:], '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'features'+'.pt')
                 
                 num_nonego = int((cav_num-1)/(self.sweep_length+1)) 
-                nonego_features = features[1:].clone()                  # [nonego_cavs(k+1), C, H, W]
-                nonego_timestamps = time_stamps[1:]                     # [nonego_cavs, ]
-                nonego_features = nonego_features.permute(0,2,3,1)      # 
-                nonego_features = self.time_encoding(nonego_features,nonego_timestamps)
-                nonego_features = nonego_features.permute(0,3,1,2)      # [nonego_cavs(k+1), C, H, W]
+                nonego_features = features[1:].clone()                  # [nonego_cavs(1+k), C, H, W]
+                
+                nonego_splits = nonego_features.split(self.sweep_length+1,0) # ([1+k, C, H, W], [], ..., [])
+                nonego_splits = torch.stack(nonego_splits,dim=0)        # [nonego_cars, 1+k, C, H, W]
+                # torch.save(nonego_splits, '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'nonego_splits'+'.pt')
+                nonego_history = nonego_splits[:,1:]                    # [nonego_cars, k, C, H, W]
+
+                # if self.if_swin_trans:
+                nonego_timestamps = time_stamps[1:]                     # [nonego_cavs(1+k), ]
+                nonego_timestamps_splits = nonego_timestamps.split(self.sweep_length+1, 0)
+                nonego_timestamps_splits = torch.stack(nonego_timestamps_splits,dim=0)   # [n, 1+k, ]
+                nonego_timestamps_history = nonego_timestamps_splits[:, 1:]
+
+
+                nonego_history = nonego_history.reshape(-1, C, H, W).permute(0,2,3,1)
+                nonego_timestamps_history = nonego_timestamps_history.reshape(-1)
+                # nonego_features = nonego_features.permute(0,2,3,1)      # 
+                nonego_history = self.time_encoding(nonego_history,nonego_timestamps_history)
+                nonego_history = nonego_history.permute(0,3,1,2).reshape(num_nonego, self.sweep_length, C, H, W)      # [nonego_cavs, k, C, H, W]
 
                 # mask after TE, valid_mask: [B, H, W]
                 non_ego_mask = valid_mask[1:]                           # [nonego_cavs*(k+1), 1, H, W]
-                nonego_features = nonego_features * non_ego_mask        # [nonego_cavs*(k+1), 1, H, W]
+                non_ego_mask_split = non_ego_mask.split(self.sweep_length+1,0) # ([1+k, 1, H, W], ... ) nonego_cavs 
+                non_ego_mask = torch.stack(non_ego_mask_split, dim=0)   # nonego_cavs, 1+k, H, W
+                if if_save_pt:
+                    torch.save(non_ego_mask, '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'nonego_mask_splits'+'.pt')
 
-                nonego_splits = nonego_features.split(self.sweep_length+1,0) # ([1+k, C, H, W], [], ..., [])
-                nonego_splits = torch.stack(nonego_splits,dim=0)        # [nonego_cars, 1+k, C, H, W]
-                nonego_history = nonego_splits[:,1:]                    # [nonego_cars, k, C, H, W]
-                # nonego_splits = nonego_splits.permute(0,3,4,1,2).reshape(num_nonego*H*W, self.sweep_length, C)
-                # time_attned_feature = self.layers_temporal[0](nonego_splits, nonego_splits, nonego_splits, None)
-                # time_attned_feature = nonego_splits
-                # time_attned_feature = time_attned_feature.reshape(num_nonego, H, W, self.sweep_length*C).permute(0,3,1,2) 
-                
+                non_ego_mask_past = non_ego_mask[:, 1:]                 # nonego_cavs, k, H, W
+                nonego_history = nonego_history * non_ego_mask_past        # [nonego_cavs, k, C, H, W]
+            
                 hidden = self.swin_trans(nonego_history)                # [non_ego_cars, 1, C, H, W]
+
+                non_ego_mask_past_union = (torch.sum(non_ego_mask_past, dim=1)>0).to(torch.float32) # nonego_cavs, 1, H, W
+                non_ego_mask_past_union = self.dilate_mask(non_ego_mask_past_union)
+                if if_save_pt:
+                    torch.save(non_ego_mask_past_union,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'non_ego_mask_past_union_dilated_{self.dilation_size}' + '.pt')  
+
+                # elif self.if_syncnet:
+                #     hidden = self.syncnet(nonego_history,[1])
+                #     non_ego_mask_past_union = torch.ones((num_nonego, C, H, W)).to(hidden)
+
                 # query = self.predict_query.repeat(num_nonego,1,1)
                 # final_estimations = self.predict_attention(query, hidden, hidden, None).reshape(num_nonego, H, W, -1).permute(0,3,1,2)
                 final_estimations = hidden.squeeze(1)                   # [non_ego_cars, C, H, W]
+                if if_save_pt:
+                    torch.save(final_estimations, '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'nonego_estimations'+'.pt')
 
-                non_ego_mask_split = non_ego_mask.split(self.sweep_length+1,0) # ([1+k, 1, H, W], ... ) nonego_cavs 
-                non_ego_mask = torch.stack(non_ego_mask_split, dim=0)   # nonego_cavs, 1+k, 1, H, W
-                non_ego_mask_past = non_ego_mask[:, 1:]                 # nonego_cavs, k, H, W
-                non_ego_mask_past_union = (torch.sum(non_ego_mask_past, dim=1)>0).to(torch.float32) # nonego_cavs, 1, H, W
-                # torch.save(non_ego_mask_past_union,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'non_ego_mask_past_union_{self.dilation_size}' + '.pt')
-                non_ego_mask_past_union = self.dilate_mask(non_ego_mask_past_union)
-                # torch.save(non_ego_mask_past_union,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'non_ego_mask_past_union_dilated_{self.dilation_size}' + '.pt')
+                final_estimations = final_estimations * non_ego_mask_past_union
+
+                # debug use: uncomment to 用带有delay的 feature 直接作为feature 输出
+                # final_estimations = nonego_splits[:,1]
 
                 # debug use, uncomment to retrieve current mask
-                ego_mask_curr = valid_mask[0]
-                nonego_mask_curr = non_ego_mask[:, 0] # [nonego_cav, 1, H, W]
+                # ego_mask_curr = valid_mask[0]
+                # nonego_mask_curr = non_ego_mask[:, 0] # [nonego_cav, 1, H, W]
                 # torch.save(nonego_mask_curr,'/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ f'nonego_mask_curr_{self.dilation_size}' + '.pt')
 
-                individual_recon_loss_pos = torch.torch.nn.functional.smooth_l1_loss(non_ego_mask_past_union*final_estimations,nonego_splits[:,0],reduction='sum')
+                individual_recon_loss_pos = torch.torch.nn.functional.smooth_l1_loss(final_estimations,nonego_splits[:,0],reduction='sum')/C
                 if non_ego_mask_past_union.sum() != 0:
                     individual_recon_loss_pos /= (non_ego_mask_past_union.sum())
 
-                individual_recon_loss_neg = torch.torch.nn.functional.smooth_l1_loss((1-non_ego_mask_past_union)*final_estimations,nonego_splits[:,0],reduction='sum')
-                if (1-non_ego_mask_past_union).sum() != 0:
-                    individual_recon_loss_neg /= ((1-non_ego_mask_past_union).sum())
+                # individual_recon_loss_neg = torch.torch.nn.functional.smooth_l1_loss((1-non_ego_mask_past_union)*final_estimations,nonego_splits[:,0],reduction='sum')
+                # if (1-non_ego_mask_past_union).sum() != 0:
+                    # individual_recon_loss_neg /= ((1-non_ego_mask_past_union).sum())
 
-                individual_recon_loss = individual_recon_loss_pos + individual_recon_loss_neg
+                # individual_recon_loss = individual_recon_loss_pos + individual_recon_loss_neg
+                individual_recon_loss = individual_recon_loss_pos
+
+                latency_recon_loss = torch.torch.nn.functional.smooth_l1_loss(latency_features, nonego_splits[:,0],reduction='sum')/C
+                if non_ego_mask_past_union.sum() != 0:
+                    latency_recon_loss /= (non_ego_mask_past_union.sum())
 
 
                 ###############skimage.dilation##########################################
@@ -548,7 +596,7 @@ class AttentionFusion(nn.Module):
                 # ipdb.set_trace()
                 # print('#######################:fuse',torch.torch.nn.functional.smooth_l1_loss(final1,final_fuse_feature),fuse_recon_loss)
              
-                return final_fuse_estimation,final_fuse_feature,final_fuse_feature_latency, individual_recon_loss # +fuse_recon_loss
+                return final_fuse_estimation,final_fuse_feature,final_fuse_feature_latency, individual_recon_loss, latency_recon_loss # +fuse_recon_loss
                 # return final_fuse_feature, 0
 
             
@@ -683,10 +731,9 @@ class MaxFusion(nn.Module):
     def forward(self, x):
         return torch.max(x, dim=0)[0]
         
-class raindrop_fuse_compensation(nn.Module):
+class raindrop_swin(nn.Module):
     def __init__(self, args):
-        super(raindrop_fuse_compensation, self).__init__()
-        
+        super(raindrop_swin, self).__init__()
         self.communication = False
         self.round = 1
         if 'communication' in args:
@@ -711,6 +758,7 @@ class raindrop_fuse_compensation(nn.Module):
             max_len = args['max_len']
             height = 100
             width = 352
+
             self.fuse_layer1 = False
             if self.multi_scale:
                 layer_nums = args['layer_nums']
@@ -761,6 +809,8 @@ class raindrop_fuse_compensation(nn.Module):
             else: 
                 if self.agg_mode == 'MAX': # max fusion, debug use
                     self.fuse_modules = MaxFusion()
+
+        print("##### Raindrop + ** SWIN Trans ** w.o. single supervision Init! #####")
 
     def regroup(self, x, len, k=0):
         """
@@ -817,7 +867,6 @@ class raindrop_fuse_compensation(nn.Module):
         _, C, H, W = x.shape
         B, L, K = pairwise_t_matrix.shape[:3]
         # print('num',x.shape[0],pairwise_t_matrix.shape)
-        
         # (B,L,k,2,3)
         pairwise_t_matrix = pairwise_t_matrix[:,:,:,[0, 1],:][:,:,:,:,[0, 1, 3]] 
         # [B, L, L, 2, 3], 只要x,y这两个维度就可以(z只有一层)，所以提取[0,1,3]作为仿射变换矩阵, 大小(2, 3)
@@ -835,14 +884,17 @@ class raindrop_fuse_compensation(nn.Module):
             
             if self.fuse_layer1:
                 all_recon_loss = 0
-                layer1_feats = backbone.resnet.forward_layer1(x)
+                layer1_feats = backbone.resnet.forward_layer1(x)  # [B, C, H, W]
                 if self.communication:
                     batch_confidence_maps = self.regroup(rm, record_len, K) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
                     batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
                     _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                     communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
+                    # debug use, to save original feature:
+                    # debug_feats = layer1_feats.
                     # TODO scale = 0 不加 mask
                     layer1_feats = layer1_feats * communication_masks_tensor
+
                 batch_node_features = self.regroup(layer1_feats, record_len, K)
                 x_fuse = []
                 x_fuse_curr = []
@@ -927,6 +979,7 @@ class raindrop_fuse_compensation(nn.Module):
                 ups_curr = []
                 ups_latency = []
                 all_recon_loss = 0
+                all_latency_recon_loss = 0
                 for i in range(self.num_levels):
                     x = feats[i] if with_resnet else backbone.blocks[i](x)
                     ############ 1. Communication (Mask the features) #########
@@ -936,14 +989,20 @@ class raindrop_fuse_compensation(nn.Module):
                             batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
                             _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                             communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
-                            # TODO scale = 0 不加 mask
+                            # for debug use
+                            if if_save_pt:
+                                x_wo_mask = x.clone()
+                            
+                            # if self.if_syncnet: # 如果使用 SyncNet 作为补偿模块，则不使用mask
+                            #     communication_masks_tensor = torch.ones_like(communication_masks_tensor)
+                            
                             x = x * communication_masks_tensor
                         else:
                             communication_rates = torch.tensor(0).to(x.device)
                     else:
                         if self.communication:
                             communication_masks_tensor = F.max_pool2d(communication_masks_tensor, kernel_size=2)
-                            # TODO scale = 1, 2 不加 mask
+                            # scale = 1, 2 不加 mask
                             # x = x * communication_masks_tensor
                     
                     ############ 2. Split the confidence map #######################
@@ -952,7 +1011,11 @@ class raindrop_fuse_compensation(nn.Module):
                     # [[2*3, 256*2, 100/2, 252/2], [3*3, 256*2, 100/2, 252/2], ...]
                     # print('x',x.shape)
                     batch_node_features = self.regroup(x, record_len, K)
-
+                    batch_comm_masks = self.regroup(communication_masks_tensor, record_len, K)
+                    
+                    if if_save_pt:
+                        batch_x_wo_mask = self.regroup(x_wo_mask, record_len, K)
+                    
                     ############ 3. Fusion ####################################
                     x_fuse = []
                     x_fuse_curr = []
@@ -961,14 +1024,22 @@ class raindrop_fuse_compensation(nn.Module):
                         # number of valid agent
                         N = record_len[b]
                         # t_matrix[i, j]-> from i to j
-                        t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
+                        t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) # [Nx(k+1), 2, 3]
                         node_features = batch_node_features[b]
+                        node_masks = batch_comm_masks[b]
                         C, H, W = node_features.shape[1:]
                         # print('node and t mat',node_features.shape,t_matrix.shape,record_len)
                         t_matrix = t_matrix[K-1:]
                         neighbor_feature = warp_affine_simple(node_features,
                                                         t_matrix,
                                                         (H, W))
+                        neighbor_mask = warp_affine_simple(node_masks, t_matrix, (H, W))
+
+                        if if_save_pt:
+                            neighbor_wo_mask = warp_affine_simple(batch_x_wo_mask[b], t_matrix, (H, W))
+                            torch.save(neighbor_wo_mask[1:], '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/'+ 'feature_wo_mask'+'.pt')
+
+                        # TODO: 这个位置
                         record_frames = np.ones((N))*K
                         # def forward(self, feartures, comm_mask, sensor_dist, record_frames, time_diffs):
                         
@@ -976,11 +1047,13 @@ class raindrop_fuse_compensation(nn.Module):
                             # for sensor embedding
                             sensor_dist = -1# (B, H, W)
                             # x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
-                            features,features_curr,features_latency, recon_loss = self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b])
+                            # features,features_curr,features_latency, recon_loss = self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b])
+                            features, features_curr, features_latency, recon_loss, latency_recon_loss = self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], neighbor_mask)
                             x_fuse.append(features)
                             x_fuse_curr.append(features_curr)
                             x_fuse_latency.append(features_latency)
                             all_recon_loss += recon_loss
+                            all_latency_recon_loss += latency_recon_loss
                             # # TODO for scale debug
                             # if i==self.num_levels-1:
                             #     x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
@@ -1062,4 +1135,4 @@ class raindrop_fuse_compensation(nn.Module):
 
             # self.fuse_modsules(x_fuse, record_len)
         
-        return x_fuse,x_fuse_curr,x_fuse_latency, communication_rates, all_recon_loss, {}
+        return x_fuse,x_fuse_curr,x_fuse_latency, communication_rates, all_recon_loss, all_latency_recon_loss, {}

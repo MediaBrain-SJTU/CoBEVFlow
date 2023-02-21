@@ -74,6 +74,21 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         else:
             self.binomial_p = 1
 
+        # 控制 past-0 处是否有扰动
+        self.is_no_shift = False
+        if 'is_no_shift' in params and params['is_no_shift']:
+            self.is_no_shift = True
+
+        # 控制每个场景内不同车的采样间隔是否一致
+        self.is_same_sample_interval = False
+        if 'is_same_sample_interval' in params and params['is_same_sample_interval']:
+            self.is_same_sample_interval = True
+
+        # 控制是否采用完全 regular 的数据 （整数timestamp）
+        self.is_ab_regular = False
+        if 'is_ab_regular' in params and params['is_ab_regular']:
+            self.is_ab_regular = True
+        
         self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
 
         assert 'proj_first' in params['fusion']['args']
@@ -455,22 +470,22 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                     if i == 0: # ego-past-0 与 ego-curr 是一样的
                         data[cav_id]['past_k'][i] = data[cav_id]['curr']
                         continue
-                    sample_inverval = self.sample_interval_exp
+                    sample_interval = self.sample_interval_exp
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # TODO: debug use, uncomment: past-0 = curr, for no shift
-                    if i == 0: 
-                        data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                        continue
+                    if self.is_no_shift:
+                        if i == 0: 
+                            data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                            continue
+                    if self.is_same_sample_interval:
+                        sample_interval = self.sample_interval_exp
                     # B(n, p)
-                    trails = bernoulliDist.rvs(self.binomial_n)
-                    sample_inverval = sum(trails)
-
-                    # TODO: debug use, uncomment: 同一个sample中delay完全一致、不同sample的采样间隔一致
-                    sample_inverval = self.sample_interval_exp
+                    else:
+                        trails = bernoulliDist.rvs(self.binomial_n)
+                        sample_interval = sum(trails)                    
 
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = OrderedDict()
-                latest_sample_stamp_idx -= sample_inverval
+                latest_sample_stamp_idx -= sample_interval
                 timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0]
                 # load the corresponding data into the dictionary
                 # load param file: json is faster than yaml
@@ -498,7 +513,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                             pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
 
                 data[cav_id]['past_k'][i]['timestamp'] = timestamp_key
-                data[cav_id]['past_k'][i]['sample_interval'] = sample_inverval
+                data[cav_id]['past_k'][i]['sample_interval'] = sample_interval
                 data[cav_id]['past_k'][i]['time_diff'] = \
                     self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp'])
             
@@ -893,7 +908,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         past_k_poses = []
         # past k timestamps
         past_k_time_diffs = []
-        # past k sample invervals
+        # past k sample intervals
         past_k_sample_interval = []
 
         # for debug use
@@ -1144,7 +1159,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         past_k_label_list = []
         # store the time interval of each feature map
         past_k_time_diff = []
-        past_k_sample_inverval = []
+        past_k_sample_interval = []
         past_k_avg_time_delay = []
         past_k_avg_sample_interval = []
         # pairwise transformation matrix
@@ -1173,7 +1188,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             curr_lidar_pose_list.append(ego_dict['curr_lidar_poses']) # ego_dict['curr_lidar_pose'] is np.ndarray [N,6]
             past_k_lidar_pose_list.append(ego_dict['past_k_lidar_poses']) # ego_dict['past_k_lidar_pose'] is np.ndarray [N,k,6]
             past_k_time_diff.append(ego_dict['past_k_time_diffs']) # ego_dict['past_k_time_diffs'] is np.array(), len=nxk
-            past_k_sample_inverval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
+            past_k_sample_interval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
             past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
             past_k_avg_time_delay.append(ego_dict['avg_time_delay']) # ego_dict['avg_sample_interval'] is float
             # avg_time_delay += ego_dict['avg_time_delay']
@@ -1202,8 +1217,8 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         past_k_time_diff= torch.from_numpy(past_k_time_diff)
 
         # collate past k sample interval from different batch, (B, )
-        past_k_sample_inverval = np.hstack(past_k_sample_inverval)
-        past_k_sample_inverval = torch.from_numpy(past_k_sample_inverval)
+        past_k_sample_interval = np.hstack(past_k_sample_interval)
+        past_k_sample_interval = torch.from_numpy(past_k_sample_interval)
 
         past_k_avg_sample_interval = np.array(past_k_avg_sample_interval)
         avg_sample_interval = float(sum(past_k_avg_sample_interval) / len(past_k_avg_sample_interval))
@@ -1260,7 +1275,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                                    'curr_lidar_pose': curr_lidar_pose,
                                    'past_lidar_pose': past_k_lidar_pose,
                                    'past_k_time_interval': past_k_time_diff,
-                                   'past_k_sample_inverval': past_k_sample_inverval,
+                                   'past_k_sample_interval': past_k_sample_interval,
                                    'avg_sample_interval': avg_sample_interval,
                                    'avg_time_delay': avg_time_delay})
                                 #    'times': time_consume})

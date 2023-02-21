@@ -1,4 +1,4 @@
-name: opv2v_npj_raindrop_attn
+name: rain_thres_0.07_k_5_swin_w_single  # TODO:
 
 
 root_dir: "/DB/public/OPV2V_irregular_npy/train/"
@@ -17,23 +17,25 @@ exp_name: ""
 num_sweep_frames: &past_k 3
 # time_delay: 0
 
-binomial_n: 10
-binomial_p: 0.5
+binomial_n: 10 
+binomial_p: 0.3                   # TODO:
+is_no_shift: False                
+is_same_sample_interval: true     # TODO:
 
 is_single_pre_trained:
-  pre_train_flag: True
-  pre_train_fix: true
-  pre_train_path: '/GPFS/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26'
+  pre_train_flag: False             # TODO:
+  pre_train_fix: False              # TODO:
+  pre_train_path: '/DB/data/sizhewei/logs/where2comm_irr_no_shift_pretrain'
   pre_train_epoch: 17
 
 comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 1 # TODO: 调整batch_size
+  batch_size: &batch_size 1 
   epoches: 20
-  eval_freq: 2
-  save_freq: 2
+  eval_freq: 1
+  save_freq: 1
   max_cav: &max_cav 5
 
 fusion:
@@ -71,8 +73,8 @@ postprocess:
   gt_range: *cav_lidar
   anchor_args:
     cav_lidar_range: *cav_lidar
-    l: 4.5
-    w: 2
+    l: 3.9
+    w: 1.6
     h: 1.56
     r: [0, 90]
     feature_stride: 2
@@ -120,17 +122,12 @@ model:
       kernal_size: [ 3 ]
       stride: [ 1 ]
       padding: [ 1 ]
-      dim: [ 256 ]
+      dim: [ 64 ]                      # TODO:
       input_dim: 384 # 128 * 3
-    
-    # dcn:
-    #   in_channels: [384]
-    #   out_channels: [256]
-    #   stride: [1]
-    #   padding: [1]
-    #   kernel_size : [3]
-    #   n_blocks: 1
-    with_compensation: True
+
+    with_compensation: True             # TODO:
+    with_single_supervise: True        # TODO:
+
     rain_model:
       d_ff: 256
       h: 8
@@ -143,6 +140,7 @@ model:
       downsample_rate: 1
       n_head: 8
       only_attention: true
+      
       fusion_setting:
         sweep_length: *past_k
         if_max_aggre: False
@@ -156,19 +154,21 @@ model:
         if_dotproductattn : False
         use_mask : False
         confidence_fetch : false
-        if_swin_trans: True
-        sup_individual: True
-        dilation_size: 7 # 必须是奇数
+        compensation_mode: SWIN   # SWIN, SYNCNET  # TODO: 
+        # if_swin_trans: True
+        # if_syncnet: True
+        sup_individual: True 
+        dilation_size: 5 # 必须是奇数
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
-        thre: 0.10
+        thre: 0.07
         gaussian_smooth:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
         mode: 'RAIN' # MAX or RAIN
-      multi_scale: true
+      multi_scale: False                            # TODO:
       layer_nums: *layer_nums
       num_filters: *num_filters
 
@@ -209,5 +209,5 @@ optimizer:
 lr_scheduler:
   core_method: multistep #step, multistep and Exponential support
   gamma: 0.1
-  step_size: [10, 20]
+  step_size: [5, 10]  # TODO:
 

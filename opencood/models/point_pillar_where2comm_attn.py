@@ -16,7 +16,8 @@ from opencood.models.sub_modules.naive_compress import NaiveCompressor
 # from opencood.models.fuse_modules.where2comm import Where2comm
 from opencood.models.fuse_modules.where2comm_attn import Where2comm
 from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
-from opencood.models.fuse_modules.raindrop_attn_compensation import raindrop_fuse_compensation
+from opencood.models.fuse_modules.raindrop_swin import raindrop_swin
+from opencood.models.fuse_modules.raindrop_swin_w_single import raindrop_swin_w_single
 import torch
 
 class PointPillarWhere2commAttn(nn.Module):
@@ -60,18 +61,26 @@ class PointPillarWhere2commAttn(nn.Module):
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
+        # 用于 single 部分的监督
+        self.single_supervise = False
         if 'with_compensation' in args and args['with_compensation']:
             self.compensation = True
-            self.rain_fusion = raindrop_fuse_compensation(args['rain_model'])
+            if 'with_single_supervise' in args and args['with_single_supervise']:
+                self.rain_fusion = raindrop_swin_w_single(args['rain_model'])
+                self.single_supervise = True
+            else:
+                self.rain_fusion = raindrop_swin(args['rain_model'])
         else: 
             self.compensation = False
             self.rain_fusion = raindrop_fuse(args['rain_model'])
+
         self.multi_scale = args['rain_model']['multi_scale']
         
         if self.shrink_flag:
-            self.cls_head = nn.Conv2d(128 * 2, args['anchor_number'],
+            dim = args['shrink_header']['dim'][0]
+            self.cls_head = nn.Conv2d(int(dim), args['anchor_number'],
                                     kernel_size=1)
-            self.reg_head = nn.Conv2d(128 * 2, 7 * args['anchor_number'],
+            self.reg_head = nn.Conv2d(int(dim), 7 * args['anchor_number'],
                                     kernel_size=1)
         else:
             self.cls_head = nn.Conv2d(128 * 3, args['anchor_number'],
@@ -156,7 +165,16 @@ class PointPillarWhere2commAttn(nn.Module):
         # rain attention:
         if self.multi_scale:
             if self.compensation:
-                fused_feature,fused_feature_curr,fused_feature_latency, communication_rates, all_recon_loss, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                if self.single_supervise:
+                    fused_feature, single_feature, communication_rates, all_recon_loss, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                                                psm_single,
+                                                record_len,
+                                                pairwise_t_matrix, 
+                                                record_frames,
+                                                self.backbone,
+                                                [self.shrink_conv, self.cls_head, self.reg_head])
+                else:
+                    fused_feature,fused_feature_curr,fused_feature_latency, communication_rates, all_recon_loss, all_latency_recon_loss, result_dict = self.rain_fusion(batch_dict['spatial_features'],
                                                 psm_single,
                                                 record_len,
                                                 pairwise_t_matrix, 
@@ -174,15 +192,37 @@ class PointPillarWhere2commAttn(nn.Module):
             # downsample feature to reduce memory
             if self.shrink_flag:
                 fused_feature = self.shrink_conv(fused_feature)
-                if self.compensation:
-                    fused_feature_curr = self.shrink_conv(fused_feature_curr)
-                    fused_feature_latency = self.shrink_conv(fused_feature_latency)
+                if self.single_supervise:
+                    single_feature = self.shrink_conv(single_feature)
+                # if self.compensation:
+                    
+                #         # single_feature = self.shrink_conv(single_feature)
+                
+                #         fused_feature_curr = self.shrink_conv(fused_feature_curr)
+                #         fused_feature_latency = self.shrink_conv(fused_feature_latency)
         else:
-            fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
-                                            psm_single,
-                                            record_len,
-                                            pairwise_t_matrix,
-                                            record_frames)
+            # fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
+            #                                 psm_single,
+            #                                 record_len,
+            #                                 pairwise_t_matrix,
+            #                                 record_frames)
+            if self.compensation:
+                if self.single_supervise:
+                    fused_feature, single_feature, communication_rates, all_recon_loss, result_dict = self.rain_fusion(spatial_features_2d,
+                                                psm_single,
+                                                record_len,
+                                                pairwise_t_matrix, 
+                                                record_frames,
+                                                self.backbone,
+                                                [self.shrink_conv, self.cls_head, self.reg_head])
+                else:
+                    fused_feature,fused_feature_curr,fused_feature_latency, communication_rates, all_recon_loss, all_latency_recon_loss, result_dict = self.rain_fusion(spatial_features_2d,
+                                                psm_single,
+                                                record_len,
+                                                pairwise_t_matrix, 
+                                                record_frames,
+                                                self.backbone,
+                                                [self.shrink_conv, self.cls_head, self.reg_head])
 
         # # print('spatial_features_2d: ', spatial_features_2d.shape)
         # if self.multi_scale:
@@ -211,69 +251,19 @@ class PointPillarWhere2commAttn(nn.Module):
                        'rm': rm}
 
         if self.compensation:
-            psm_curr = self.cls_head(fused_feature_curr)
-            rm_curr = self.reg_head(fused_feature_curr)
-
-            psm_latency = self.cls_head(fused_feature_latency)
-            rm_latency = self.reg_head(fused_feature_latency)
+            if self.single_supervise:
+                psm_nonego_single = self.cls_head(single_feature)
+                rm_nonego_single = self.reg_head(single_feature)
+                output_dict.update({
+                    'psm_nonego_single': psm_nonego_single,
+                    'rm_nonego_single': rm_nonego_single
+                })
+            
             output_dict.update({
-                'psm_curr': psm_curr,
-                'rm_curr': rm_curr,
-                'psm_latency': psm_latency,
-                'rm_latency': rm_latency,
-                'recon_loss': all_recon_loss
+                'recon_loss': all_recon_loss, 
+                'record_len': record_len
             })
 
         output_dict.update(result_dict)  # TODO: 这个现在是空字典  
         
-        # voxel_features = data_dict['curr_processed_lidar']['voxel_features']         #(M, 32, 4)
-        # voxel_coords = data_dict['curr_processed_lidar']['voxel_coords']             #(M, 4)
-        # voxel_num_points = data_dict['curr_processed_lidar']['voxel_num_points']     #(M, )
-        # record_len = data_dict['record_len']                  
-        
-        # batch_single_dict = {'voxel_features': voxel_features,
-        #                     'voxel_coords': voxel_coords,
-        #                     'voxel_num_points': voxel_num_points,
-        #                     'record_len': record_len}
-        
-        # # n, 4 -> n, c  ('pillar_features')
-        # batch_single_dict = self.pillar_vfe(batch_single_dict)
-        # # (n, c) -> (batch_cav_size, C, H, W) put pillars into spatial feature map ('spatial_features')
-        # batch_single_dict = self.scatter(batch_single_dict)
-        # batch_single_dict = self.backbone(batch_single_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
-        # # N, C, H', W'. [N, 384, 100, 252]
-        # single_spatial_features_2d = batch_dict['spatial_features_2d']
-        
-        # # downsample feature to reduce memory
-        # if self.shrink_flag:
-        #     single_spatial_features_2d = self.shrink_conv(single_spatial_features_2d)  # (B, 256, H', W')
-        # # compressor
-        # if self.compression:
-        #     single_spatial_features_2d = self.naive_compressor(single_spatial_features_2d)
-        # # [B, 256, 50, 176]
-        # psm_single = self.cls_head(single_spatial_features_2d)
-        # rm_single = self.reg_head(single_spatial_features_2d)
-
-        # split_psm_single = self.regroup(psm_single, record_len)
-        # split_rm_single = self.regroup(rm_single, record_len)
-        # psm_single_v = []
-        # psm_single_i = []
-        # rm_single_v = []
-        # rm_single_i = []
-        # for b in range(len(split_psm_single)):
-        #     psm_single_v.append(split_psm_single[b][0:1])
-        #     psm_single_i.append(split_psm_single[b][1:2])
-        #     rm_single_v.append(split_rm_single[b][0:1])
-        #     rm_single_i.append(split_rm_single[b][1:2])
-        # psm_single_v = torch.cat(psm_single_v, dim=0)
-        # psm_single_i = torch.cat(psm_single_i, dim=0)
-        # rm_single_v = torch.cat(rm_single_v, dim=0)
-        # rm_single_i = torch.cat(rm_single_i, dim=0)
-        # output_dict.update({'psm_single_v': psm_single_v,
-        #                'psm_single_i': psm_single_i,
-        #                'rm_single_v': rm_single_v,
-        #                'rm_single_i': rm_single_i,
-        #                'comm_rate': communication_rates
-        #                })
-
         return output_dict

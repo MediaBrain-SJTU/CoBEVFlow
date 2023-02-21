@@ -1,4 +1,5 @@
-name: pointpillar_irr_no_shift_pretrain
+name: rain_thres_0.07_k_5_SyncNet  # TODO:
+
 
 root_dir: "/DB/public/OPV2V_irregular_npy/train/"
 validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
@@ -13,31 +14,32 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 1
+num_sweep_frames: &past_k 3
+# time_delay: 0
 
-binomial_n: 10
-binomial_p: 0
-is_no_shift: False
-is_same_sample_interval: false
+binomial_n: 10 
+binomial_p: 0.3                   # TODO:
+is_no_shift: False                
+is_same_sample_interval: true     # TODO:
 
 is_single_pre_trained:
-  pre_train_flag: False
-  # pre_train_fix: false
-  # pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
-  # pre_train_epoch: 24
+  pre_train_flag: True
+  pre_train_fix: True              # TODO:
+  pre_train_path: '/DB/data/sizhewei/logs/where2comm_irr_no_shift_pretrain'
+  pre_train_epoch: 17
 
 comm_range: 1000
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 1 # TODO: 调整batch_size
+  batch_size: &batch_size 1 
   epoches: 20
   eval_freq: 1
   save_freq: 1
   max_cav: &max_cav 5
 
 fusion:
-  core_method: 'IntermediateFusionDatasetIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
+  core_method: 'IntermediateFusionDatasetIrregularCompensation' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
   args:
     proj_first: false
     clip_pc: false
@@ -87,7 +89,7 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_where2comm_attn
+  core_method: point_pillar_where2comm_syncnet
   
   args:
     voxel_size: *voxel_size
@@ -122,14 +124,9 @@ model:
       padding: [ 1 ]
       dim: [ 256 ]
       input_dim: 384 # 128 * 3
-    
-    # dcn:
-    #   in_channels: [384]
-    #   out_channels: [256]
-    #   stride: [1]
-    #   padding: [1]
-    #   kernel_size : [3]
-    #   n_blocks: 1
+
+    with_compensation: True             # TODO:
+    with_single_supervise: False        # TODO:
 
     rain_model:
       d_ff: 256
@@ -143,32 +140,61 @@ model:
       downsample_rate: 1
       n_head: 8
       only_attention: true
+      
       fusion_setting:
         sweep_length: *past_k
+        if_max_aggre: False
+        if_conv_aggre: False
         if_spatial_encoding : False
-        if_ego_time_encoding : false
-        if_nonego_time_encoding : true
+        if_ego_time_encoding : True
+        if_nonego_time_encoding : False
         if_sensor_encoding : False
-        if_time_attn_aggre : true
-        if_spatial_conv : False
-        if_dotproductattn : True
-        use_mask : True
+        if_time_attn_aggre : True
+        if_spatial_conv : True
+        if_dotproductattn : False
+        use_mask : False
         confidence_fetch : false
+        compensation_mode: SYNCNET   # SWIN, SYNCNET  # TODO: 
+        # if_swin_trans: True
+        # if_syncnet: True
+        sup_individual: True 
+        dilation_size: 5 # 必须是奇数
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
-        thre: 0.10
+        thre: 0.07
         gaussian_smooth:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
-        mode: 'MAX' # MAX or RAIN
+        mode: 'RAIN' # MAX or RAIN
       multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 
+    # fusion_args:
+    #   voxel_size: *voxel_size
+    #   downsample_rate: 1
+    #   in_channels: 256
+    #   n_head: 8
+    #   dropout_rate: 0
+    #   only_attention: true
+    #   communication:
+    #     round: 1
+    #     thre: 0.01
+    #     gaussian_smooth:
+    #       k_size: 5
+    #       c_sigma: 1.0
+    #   agg_operator:
+    #     mode: 'MAX'
+    #     feature_dim: 256
+    #   multi_scale: true
+    #   layer_nums: *layer_nums
+    #   num_filters: *num_filters
+
+
 loss:
-  core_method: point_pillar_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0
@@ -183,5 +209,5 @@ optimizer:
 lr_scheduler:
   core_method: multistep #step, multistep and Exponential support
   gamma: 0.1
-  step_size: [10, 20]
+  step_size: [5, 10]  # TODO:
 

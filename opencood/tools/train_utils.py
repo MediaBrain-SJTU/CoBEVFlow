@@ -168,8 +168,8 @@ def setup_train(hypes):
     #     folder_name = folder_name + '_wo_multiscale'
     # if 'exp_name' in hypes and len(str(hypes['exp_name']))>0:
     #     folder_name = folder_name + '_' + str(hypes['exp_name'])
-    # curr_time = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
-    # folder_name = folder_name + curr_time
+    curr_time = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
+    folder_name = folder_name + curr_time
     # current_path = os.path.dirname(__file__)
     current_path = Path("/DB/data/sizhewei")
     current_path = os.path.join(current_path, 'logs/')
