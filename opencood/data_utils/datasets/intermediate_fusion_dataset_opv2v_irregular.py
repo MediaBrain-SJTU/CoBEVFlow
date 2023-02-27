@@ -474,10 +474,9 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                     if sample_interval == 0:
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # if self.is_no_shift:
-                    #     if i == 0: 
-                    #         data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                    #         continue
+                    if self.is_no_shift and i == 0:
+                        data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                        continue
                     if self.is_same_sample_interval:
                         sample_interval = self.sample_interval_exp
                     else:

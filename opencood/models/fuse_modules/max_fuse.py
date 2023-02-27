@@ -67,12 +67,12 @@ class MaxFusion(nn.Module):
 
 
         # (B*L,L,1,H,W)
-        roi_mask = torch.zeros((B, L, L, 1, H, W)).to(x)
-        for b in range(B):
-            N = record_len[b]
-            for i in range(N):
-                one_tensor = torch.ones((L,1,H,W)).to(x)
-                roi_mask[b,i] = warp_affine_simple(one_tensor, pairwise_t_matrix[b][i, :, :, :],(H, W))
+        # roi_mask = torch.zeros((B, L, L, 1, H, W)).to(x)
+        # for b in range(B):
+        #     N = record_len[b]
+        #     for i in range(N):
+        #         one_tensor = torch.ones((L,1,H,W)).to(x)
+        #         roi_mask[b,i] = warp_affine_simple(one_tensor, pairwise_t_matrix[b][i, :, :, :],(H, W))
 
         batch_node_features = split_x
         # iteratively update the features for num_iteration times
@@ -85,14 +85,14 @@ class MaxFusion(nn.Module):
             N = record_len[b]
             # (N,N,4,4)
             # t_matrix[i, j]-> from i to j
-            t_matrix = pairwise_t_matrix[b][:N, :N, :, :]
+            t_matrix = pairwise_t_matrix[b][:N, :N, :, :] # [N, N, 2, 3]
 
             updated_node_features = []
 
             # update each node i
             i = 0 # ego
             # (N,1,H,W)
-            mask = roi_mask[b, i, :N, ...]
+            # mask = roi_mask[b, i, :N, ...]
             # (N,C,H,W) neighbor_feature is agent i's neighborhood warping to agent i's perspective
             # Notice we put i one the first dim of t_matrix. Different from original.
             # t_matrix[i,j] = Tji
@@ -100,6 +100,11 @@ class MaxFusion(nn.Module):
                                             t_matrix[i, :, :, :],
                                             (H, W))
             out.append(torch.max(neighbor_feature, dim=0)[0])
+
+            # TODO: debug use
+            viz_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out'
+            torch.save(neighbor_feature, viz_path+'/neighbor_feature.pt')
+
         out = torch.stack(out)
         
         return out

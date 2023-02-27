@@ -163,8 +163,9 @@ def inference_intermediate_fusion_flow(batch_data, model, dataset):
 
     # step3: 根据 spatial feature, 融合到 ego-curr
     # step4: detection header 
-    fused_dict = model(updated_output_dict, 2)
-    pred_box_tensor, pred_score, gt_box_tensor = dataset.post_process(batch_data, fused_dict)
+    pairwise_t_matrix = batch_data['ego']['pairwise_t_matrix']
+    fused_dict = model(updated_output_dict, 2, pairwise_t_matrix)
+    pred_box_tensor, pred_score, gt_box_tensor = dataset.post_process_for_intermediate(batch_data, fused_dict)
     
     return pred_box_tensor, pred_score, gt_box_tensor
 

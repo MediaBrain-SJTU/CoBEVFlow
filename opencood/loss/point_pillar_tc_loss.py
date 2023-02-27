@@ -131,7 +131,7 @@ class PointPillarTcLoss(nn.Module):
         return updated_dict
 
 
-    def forward(self, output_dict, target_dict, mode=None):
+    def forward(self, output_dict, target_dict, mode=None, suffix=""):
         """
         Parameters
         ----------

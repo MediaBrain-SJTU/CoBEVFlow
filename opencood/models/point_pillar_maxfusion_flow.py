@@ -48,11 +48,11 @@ class PointPillarMaxfusionFlow(nn.Module):
         else:
             self.use_dir = False
 
-    def forward(self, data_dict, stage = 1):
+    def forward(self, data_dict, stage = 1, pairwise_t_matrix=None):
         if stage == 1:
             return self.single_forward(data_dict)
         else:
-            return self.fuse_forward(data_dict)
+            return self.fuse_forward(data_dict, pairwise_t_matrix)
         
     def single_forward(self, data_dict):    
         output_dict = {}
@@ -94,7 +94,7 @@ class PointPillarMaxfusionFlow(nn.Module):
 
         return output_dict
 
-    def fuse_forward(self, updated_dict):
+    def fuse_forward(self, updated_dict, pairwise_t_matrix):
         """ 参考 where2comm 的写法 如何将多车的feature 融合起来 返回最终的output dict
         Parameters:
         -----------
@@ -105,22 +105,21 @@ class PointPillarMaxfusionFlow(nn.Module):
         output_dict : 
 
         """
-        device = updated_dict.device
+        device = updated_dict['ego']['spatial_features_2d'].device
         spatial_feature_2d_list = []
         for cav_id, cav_content in updated_dict.items():
-            spatial_feature_2d_list.append(cav_content['uodated_spatial_feature_2d'])
+            spatial_feature_2d_list.append(cav_content['updated_spatial_feature_2d'])
 
-        record_len = [spatial_feature_2d_list.shape[0]]
-        spatial_feature_2d = torch.vstack(spatial_feature_2d_list).to(device)  # (sum(cav), C, H, W)
-        pairwise_t_matrix = data_dict['pairwise_t_matrix'] # TODO: 需要重新构造
+        record_len = torch.tensor([len(spatial_feature_2d_list)]).to(device)
+        spatial_feature_2d = torch.stack(spatial_feature_2d_list, dim=0).to(device)  # (sum(cav), C, H, W)
 
+        pairwise_t_matrix = pairwise_t_matrix.unsqueeze(0)
         # spatial_features_2d is [sum(cav_num), 256, 50, 176]
         # output only contains ego
         # [B, 256, 50, 176]
-        fused_feature = self.fusion_net(spatial_features_2d,
+        fused_feature = self.fusion_net(spatial_feature_2d,
                                         record_len,
                                         pairwise_t_matrix)
-
 
         psm = self.cls_head(fused_feature)
         rm = self.reg_head(fused_feature)
@@ -128,4 +127,4 @@ class PointPillarMaxfusionFlow(nn.Module):
         output_dict = {'psm': psm,
                        'rm': rm}
 
-        return updated_dict
+        return output_dict

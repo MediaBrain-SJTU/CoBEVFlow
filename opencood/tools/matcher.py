@@ -259,7 +259,8 @@ class Matcher(nn.Module):
                     time_length = 1
                 flow = (matched_past1 - matched_past2) / time_length
 
-                selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(matched_past1, order='hwl')
+                selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
+                selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
                 updated_spatial_feature_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow)
 
             features_dict[cav].update({

@@ -182,7 +182,7 @@ class PointPillarWhere2commAttn(nn.Module):
                                                 self.backbone,
                                                 [self.shrink_conv, self.cls_head, self.reg_head])
             else: 
-                fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                fused_feature, communication_rates, result_dict = self.rain_fusion(spatial_features_2d,
                     psm_single,
                     record_len,
                     pairwise_t_matrix, 
@@ -201,11 +201,11 @@ class PointPillarWhere2commAttn(nn.Module):
                 #         fused_feature_curr = self.shrink_conv(fused_feature_curr)
                 #         fused_feature_latency = self.shrink_conv(fused_feature_latency)
         else:
-            # fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
-            #                                 psm_single,
-            #                                 record_len,
-            #                                 pairwise_t_matrix,
-            #                                 record_frames)
+            fused_feature, communication_rates, result_dict = self.rain_fusion(spatial_features_2d,
+                                            psm_single,
+                                            record_len,
+                                            pairwise_t_matrix,
+                                            record_frames)
             if self.compensation:
                 if self.single_supervise:
                     fused_feature, single_feature, communication_rates, all_recon_loss, result_dict = self.rain_fusion(spatial_features_2d,
@@ -222,25 +222,7 @@ class PointPillarWhere2commAttn(nn.Module):
                                                 pairwise_t_matrix, 
                                                 record_frames,
                                                 self.backbone,
-                                                [self.shrink_conv, self.cls_head, self.reg_head])
-
-        # # print('spatial_features_2d: ', spatial_features_2d.shape)
-        # if self.multi_scale:
-        #     fused_feature, communication_rates, result_dict = self.fusion_net(batch_dict['spatial_features'],
-        #                                     psm_single,
-        #                                     record_len,
-        #                                     pairwise_t_matrix, 
-        #                                     self.backbone,
-        #                                     [self.shrink_conv, self.cls_head, self.reg_head])
-        #     # downsample feature to reduce memory
-        #     if self.shrink_flag:
-        #         fused_feature = self.shrink_conv(fused_feature)
-        # else:
-        #     fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
-        #                                     psm_single,
-        #                                     record_len,
-        #                                     pairwise_t_matrix)
-            
+                                                [self.shrink_conv, self.cls_head, self.reg_head])            
             
         # print('fused_feature: ', fused_feature.shape)
         psm = self.cls_head(fused_feature)
@@ -264,6 +246,11 @@ class PointPillarWhere2commAttn(nn.Module):
                 'record_len': record_len
             })
 
+        output_dict.update({'cls_preds_single': psm_single,
+                       'reg_preds_single': rm_single,
+                       'comm_rate': communication_rates
+                       })
+        
         output_dict.update(result_dict)  # TODO: 这个现在是空字典  
         
         return output_dict

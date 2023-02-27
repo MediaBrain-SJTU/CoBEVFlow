@@ -247,7 +247,8 @@ def main():
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
             
-            if hypes['model']['args']['with_compensation']:
+            if 'with_compensation' in hypes['model']['args'] and \
+                hypes['model']['args']['with_compensation']:
                 if hypes['model']['args']['with_single_supervise']:
                     final_loss = ouput_dict['recon_loss'] 
                     single_det_loss = criterion(ouput_dict, batch_data['ego']['single_object_label'], mode = 'single')
@@ -258,10 +259,13 @@ def main():
                     final_loss = ouput_dict['recon_loss'] + detection_loss
             else:
                 final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+                if supervise_single_flag:
+                    final_loss += criterion(ouput_dict, batch_data['ego']['label_dict_single'], suffix="_single")
+                    criterion.logging(epoch, i, len(train_loader), writer, suffix="_single")
 
             if i%10 == 0:
                 criterion.logging(epoch, i, len(train_loader), writer)
-                if hypes['model']['args']['with_compensation']:
+                if 'with_compensation' in hypes['model']['args'] and hypes['model']['args']['with_compensation']:
                     if hypes['model']['args']['with_single_supervise']:
                         print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
                                 'single_det: %.4f' % single_det_loss, '||'

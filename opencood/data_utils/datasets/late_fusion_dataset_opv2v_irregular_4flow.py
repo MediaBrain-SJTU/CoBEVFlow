@@ -291,11 +291,6 @@ class LateFusionDatasetIrregular4Flow(intermediate_fusion_dataset_opv2v_irregula
         # filter out cav with no point:
         for cav_id in illegal_cav:
             base_data_dict.pop(cav_id)
-        
-        # pairwise_t_matrix = self.get_pairwise_transformation_w_time_diff(base_data_dict, self.max_cav)
-        # processed_data_dict.update({
-        #     'pairwise_t_matrix' : pairwise_t_matrix
-        # })
 
         return processed_data_dict
 
@@ -1094,7 +1089,7 @@ class LateFusionDatasetIrregular4Flow(intermediate_fusion_dataset_opv2v_irregula
 
             output_dict[cav_id].update({'debug' : cav_content['debug']})
 
-        pairwise_t_matrix = get_pairwise_transformation_w_time_diff(batch[0], self.max_cav)
+        pairwise_t_matrix = torch.from_numpy(self.get_pairwise_transformation_w_time_diff(batch, self.max_cav))
         output_dict['ego'].update({'pairwise_t_matrix': pairwise_t_matrix})
         
         if self.visualize:
@@ -1130,6 +1125,14 @@ class LateFusionDatasetIrregular4Flow(intermediate_fusion_dataset_opv2v_irregula
         return self.post_processor.post_process_fuse_updated_frame(data_dict, output_dict)
 
 
+    def post_process_for_intermediate(self, data_dict, output_dict):
+        pred_box_tensor, pred_score = \
+            self.post_processor.post_process_for_intermediate(data_dict, output_dict)
+
+        gt_box_tensor = self.post_processor.generate_gt_bbx(data_dict)
+
+        return pred_box_tensor, pred_score, gt_box_tensor
+    
     def post_process(self, data_dict, output_dict):
         """
         Process the outputs of the model to 2D/3D bounding box.

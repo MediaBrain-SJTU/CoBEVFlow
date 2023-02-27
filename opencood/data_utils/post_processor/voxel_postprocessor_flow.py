@@ -621,6 +621,112 @@ class VoxelPostprocessorFlow(BasePostprocessor):
 
         return pred_box3d_tensor, scores
 
+    def post_process_for_intermediate(self, data_dict, output_dict):
+        """
+        Process the outputs of the model to 2D/3D bounding box.
+        Step1: convert each cav's output to bounding box format
+        Step2: project the bounding boxes to ego space.
+        Step3: NMS
+
+        For early and intermediate fusion,
+            data_dict only contains ego.
+
+        For late fusion,
+            data_dcit contains all cavs, so we need transformation matrix.
+
+
+        Parameters
+        ----------
+        data_dict : dict
+            The dictionary containing the origin input data of model.
+
+        output_dict :dict
+            The dictionary containing the output of the model.
+
+        Returns
+        -------
+        pred_box3d_tensor : torch.Tensor
+            The prediction bounding box tensor after NMS.
+        gt_box3d_tensor : torch.Tensor
+            The groundtruth bounding box tensor.
+        """
+        # the final bounding box list
+        # pred_box3d_list = []
+        # pred_box2d_list = []
+        # for cav_id, cav_content in data_dict.items():
+        #     assert cav_id in output_dict
+        #     # the transformation matrix to ego space
+        #     transformation_matrix = cav_content['transformation_matrix'] # no clean
+
+        # (H, W, anchor_num, 7)
+        anchor_box = data_dict['ego']['anchor_box']
+
+        # classification probability
+        prob = output_dict['psm']
+        prob = torch.sigmoid(prob.permute(0, 2, 3, 1))
+        prob = prob.reshape(1, -1)
+
+        # regression map
+        reg = output_dict['rm']
+
+        # convert regression map back to bounding box
+        batch_box3d = self.delta_to_boxes3d(reg, anchor_box)
+        # mask = \
+        #     torch.gt(prob, self.params['target_args']['score_threshold'])
+        mask = \
+            torch.gt(prob, 0.05)
+        mask = mask.view(1, -1)
+        mask_reg = mask.unsqueeze(2).repeat(1, 1, 7)
+
+        # during validation/testing, the batch size should be 1
+        assert batch_box3d.shape[0] == 1
+        boxes3d = torch.masked_select(batch_box3d[0],
+                                        mask_reg[0]).view(-1, 7)
+        scores = torch.masked_select(prob[0], mask[0])
+
+        # convert output to bounding box
+        if len(boxes3d) != 0:
+            # (N, 8, 3)
+            boxes3d_corner = \
+                box_utils.boxes_to_corners_3d(boxes3d,
+                                                order=self.params['order'])
+
+            # predicted 3d bbx
+            pred_box3d_tensor = boxes3d_corner
+            # remove large bbx
+            keep_index_1 = box_utils.remove_large_pred_bbx(pred_box3d_tensor)
+            keep_index_2 = box_utils.remove_bbx_abnormal_z(pred_box3d_tensor)
+            keep_index = torch.logical_and(keep_index_1, keep_index_2)
+
+            pred_box3d_tensor = pred_box3d_tensor[keep_index]
+            scores = scores[keep_index]
+
+            # STEP3
+            # nms
+            keep_index = box_utils.nms_rotated(pred_box3d_tensor,
+                                            scores,
+                                            self.params['nms_thresh']
+                                            )
+
+            pred_box3d_tensor = pred_box3d_tensor[keep_index]
+
+            # select cooresponding score
+            scores = scores[keep_index]
+
+            # filter out the prediction out of the range.
+            mask = \
+                box_utils.get_mask_for_boxes_within_range_torch(pred_box3d_tensor, self.params['gt_range'])
+            pred_box3d_tensor = pred_box3d_tensor[mask, :, :]
+            scores = scores[mask]
+
+            assert scores.shape[0] == pred_box3d_tensor.shape[0]
+            return pred_box3d_tensor, scores
+
+        else:
+            pred_box3d_tensor = torch.Tensor(0, 8, 3).to(boxes3d.device)
+            scores = torch.Tensor(0).to(boxes3d.device)
+            return pred_box3d_tensor, scores
+    
     def post_process(self, data_dict, output_dict):
         """
         Process the outputs of the model to 2D/3D bounding box.

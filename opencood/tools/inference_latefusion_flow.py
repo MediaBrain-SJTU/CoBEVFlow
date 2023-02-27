@@ -38,7 +38,7 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=2000,
+    parser.add_argument('--save_vis_interval', type=int, default=5,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
@@ -171,6 +171,8 @@ def main():
                     inference_utils.inference_intermediate_fusion_flow(batch_data,
                                                                 model,
                                                                 opencood_dataset)
+                if i==20:
+                    print(i)
 
             elif opt.fusion_method == 'no':
                 pred_box_tensor, pred_score, gt_box_tensor = \
@@ -233,16 +235,16 @@ def main():
                 except:
                     debug_path = 'path'
                 vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d_%s.png' % (i, debug_path))
-                # simple_vis.visualize(pred_box_tensor,
-                #                     gt_box_tensor,
-                #                     batch_data['ego']['origin_lidar'][0],
-                #                     hypes['postprocess']['gt_range'],
-                #                     vis_save_path,
-                #                     method='bev',
-                #                     left_hand=left_hand,
-                #                     uncertainty=uncertainty_tensor)
+                simple_vis.visualize(pred_box_tensor,
+                                    gt_box_tensor,
+                                    batch_data['ego']['origin_lidar'][0],
+                                    hypes['postprocess']['gt_range'],
+                                    vis_save_path,
+                                    method='bev',
+                                    left_hand=left_hand,
+                                    uncertainty=uncertainty_tensor)
                 
-                mytools.visualize(delay_box_tensor.cpu(), pred_box_tensor.cpu(), gt_box_tensor.cpu(), batch_data['ego']['origin_lidar'][0], hypes['postprocess']['gt_range'], vis_save_path, method='bev', vis_gt_box=True, vis_pred_box=True, vis_comp_box=True, left_hand=left_hand, uncertainty=None)
+                # mytools.visualize(delay_box_tensor.cpu(), pred_box_tensor.cpu(), gt_box_tensor.cpu(), batch_data['ego']['origin_lidar'][0], hypes['postprocess']['gt_range'], vis_save_path, method='bev', vis_gt_box=True, vis_pred_box=True, vis_comp_box=True, left_hand=left_hand, uncertainty=None)
         torch.cuda.empty_cache()
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
