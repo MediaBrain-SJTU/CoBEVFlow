@@ -1,3 +1,7 @@
+"""
+验证两帧 lidar 是否正确load
+"""
+
 import os
 import sys
 sys.path.append(os.getcwd())

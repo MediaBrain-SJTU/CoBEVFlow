@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # Author: Runsheng Xu <rxx3386@ucla.edu>, Hao Xiang <haxiang@g.ucla.edu>,
 # License: TDG-Attribution-NonCommercial-NoDistrib
-
+'''
+used for load past 2 frame, caculate flow, warp bbx, and final fuse. 
+'''
 
 import argparse
 import os
@@ -21,6 +23,8 @@ from opencood.data_utils.datasets import build_dataset
 from opencood.utils import eval_utils
 from opencood.visualization import vis_utils, my_vis, simple_vis
 
+import opencood.tools.debug_tools as mytools
+
 from tqdm import tqdm
 from tqdm.contrib import tenumerate
 from tqdm.auto import trange
@@ -34,13 +38,13 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=80,
+    parser.add_argument('--save_vis_interval', type=int, default=2000,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
-    parser.add_argument('--note', default="ir_thre_0_d_20", type=str, help='save folder name')
-    parser.add_argument('--p', default=0.02, type=float, help='binomial probability')
+    parser.add_argument('--note', default="flow_thre_20_d_300", type=str, help='save folder name')
+    parser.add_argument('--p', default=None, type=float, help='binomial probability')
     opt = parser.parse_args()
     return opt
 
@@ -50,7 +54,7 @@ def main():
     # if_save_pt = False
     opt = test_parser()
 
-    assert opt.fusion_method in ['late', 'early', 'intermediate', 'no', 'no_w_uncertainty'] 
+    assert opt.fusion_method in ['late', 'late_flow', 'early', 'intermediate', 'intermediate_flow', 'no', 'no_w_uncertainty'] 
 
     hypes = yaml_utils.load_yaml(None, opt)
     
@@ -122,9 +126,7 @@ def main():
         if batch_data is None:
             continue
         with torch.no_grad():
-            # if i < 200:
-            #     continue
-            if opt.fusion_method == 'late':
+            if opt.fusion_method == 'late' or opt.fusion_method == 'late_flow':
                 unit_time_delay = []
                 unit_sample_interval = []
                 for cav_id, cav_content in batch_data.items():
@@ -143,6 +145,16 @@ def main():
                     inference_utils.inference_late_fusion(batch_data,
                                                         model,
                                                         opencood_dataset)
+            elif opt.fusion_method == 'late_flow':
+                pred_box_tensor, pred_score, gt_box_tensor, delay_box_tensor = \
+                    inference_utils.inference_late_fusion_flow(batch_data,
+                                                        model,
+                                                        opencood_dataset,
+                                                        batch_id = i)
+                # if i==110:
+                #     break
+                # continue # TODO: debug use
+
             elif opt.fusion_method == 'early':
                 pred_box_tensor, pred_score, gt_box_tensor = \
                     inference_utils.inference_early_fusion(batch_data,
@@ -153,6 +165,13 @@ def main():
                     inference_utils.inference_intermediate_fusion(batch_data,
                                                                 model,
                                                                 opencood_dataset)
+
+            elif opt.fusion_method == 'intermediate_flow':
+                pred_box_tensor, pred_score, gt_box_tensor = \
+                    inference_utils.inference_intermediate_fusion_flow(batch_data,
+                                                                model,
+                                                                opencood_dataset)
+
             elif opt.fusion_method == 'no':
                 pred_box_tensor, pred_score, gt_box_tensor = \
                     inference_utils.inference_no_fusion(batch_data,
@@ -194,7 +213,7 @@ def main():
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%s'%(str(hypes['binomial_p'])))
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%.2f'%(hypes['binomial_p']))
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -214,14 +233,16 @@ def main():
                 except:
                     debug_path = 'path'
                 vis_save_path = os.path.join(vis_save_path_root, 'bev_%05d_%s.png' % (i, debug_path))
-                simple_vis.visualize(pred_box_tensor,
-                                    gt_box_tensor,
-                                    batch_data['ego']['origin_lidar'][0],
-                                    hypes['postprocess']['gt_range'],
-                                    vis_save_path,
-                                    method='bev',
-                                    left_hand=left_hand,
-                                    uncertainty=uncertainty_tensor)
+                # simple_vis.visualize(pred_box_tensor,
+                #                     gt_box_tensor,
+                #                     batch_data['ego']['origin_lidar'][0],
+                #                     hypes['postprocess']['gt_range'],
+                #                     vis_save_path,
+                #                     method='bev',
+                #                     left_hand=left_hand,
+                #                     uncertainty=uncertainty_tensor)
+                
+                mytools.visualize(delay_box_tensor.cpu(), pred_box_tensor.cpu(), gt_box_tensor.cpu(), batch_data['ego']['origin_lidar'][0], hypes['postprocess']['gt_range'], vis_save_path, method='bev', vis_gt_box=True, vis_pred_box=True, vis_comp_box=True, left_hand=left_hand, uncertainty=None)
         torch.cuda.empty_cache()
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
@@ -229,7 +250,7 @@ def main():
     avg_time_delay = (avg_time_delay/i) * 50 # unit is ms
     avg_sample_interval /= i
     ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note+'_'+str(hypes['binomial_p']))
+                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note+'_'+ '%.2f' % hypes['binomial_p'])
     print("Module with sample interval expection: {}".format(hypes['binomial_n']*hypes['binomial_p']))
 
 

@@ -28,8 +28,8 @@ from opencood.models.comm_modules.where2comm_multisweep import Communication
 
 from opencood.models.fuse_modules.STPT import STPT
 
-if_save_pt = True  # TODO: for debug use, save pt file
-pt_save_path = '/root/percp/OpenCOOD/opencood/viz_out/'
+if_save_pt = False  # TODO: for debug use, save pt file
+pt_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out'
 
 class PixelWeightedFusionSoftmax(nn.Module):
     def __init__(self, channel):

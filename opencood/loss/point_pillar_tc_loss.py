@@ -152,11 +152,11 @@ class PointPillarTcLoss(nn.Module):
             rm = output_dict['rm']  # [B, 14, 50, 176]
             psm = output_dict['psm'] # [B, 2, 50, 176]
 
-        targets = target_dict['targets']
-        box_cls_labels = target_dict['pos_equal_one']  # [B, 50, 176, 2]
+        targets = target_dict['targets']                # B, H, W, 14
+        box_cls_labels = target_dict['pos_equal_one']   # B, H, W, 2
 
         cls_preds = psm.permute(0, 2, 3, 1).contiguous() # N, C, H, W -> N, H, W, C
-        box_cls_labels = box_cls_labels.view(psm.shape[0], -1).contiguous()
+        box_cls_labels = box_cls_labels.view(psm.shape[0], -1).contiguous()     # B, HxWx2
 
         positives = box_cls_labels > 0
         negatives = box_cls_labels == 0

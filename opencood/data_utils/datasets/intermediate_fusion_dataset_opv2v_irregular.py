@@ -471,20 +471,29 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         data[cav_id]['past_k'][i] = data[cav_id]['curr']
                         continue
                     sample_interval = self.sample_interval_exp
+                    if sample_interval == 0:
+                        sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    if self.is_no_shift:
-                        if i == 0: 
-                            data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                            continue
+                    # if self.is_no_shift:
+                    #     if i == 0: 
+                    #         data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                    #         continue
                     if self.is_same_sample_interval:
                         sample_interval = self.sample_interval_exp
-                    # B(n, p)
                     else:
+                        # B(n, p)
                         trails = bernoulliDist.rvs(self.binomial_n)
-                        sample_interval = sum(trails)                    
+                        sample_interval = sum(trails)
+                    if sample_interval==0:
+                        if i==0: # 检查past 0 的实际时间是否在curr 的后面
+                            tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0]
+                            if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0:
+                                sample_interval = 1
+                        if i>0: # 过去的几帧不要重复
+                            sample_interval = 1                
 
                 # check the timestamp index
-                data[cav_id]['past_k'][i] = OrderedDict()
+                data[cav_id]['past_k'][i] = {}
                 latest_sample_stamp_idx -= sample_interval
                 timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0]
                 # load the corresponding data into the dictionary

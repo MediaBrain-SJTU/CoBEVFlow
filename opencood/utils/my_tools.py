@@ -169,41 +169,58 @@ if __name__ == "__main__":
     # create_small_dataset(split_name='train')
 
     root_dirs = "/DB/data/sizhewei/logs"
-    note = 'ir_in_ir_gt_update'
+    note = 'ir_thre_0_d_20'
+    flow_note = 'flow_thre_20_d_300_wo_norm'
     save_path = f"./opencood/result_{note}.jpg"
     title = "Iregular data, random sample intervals."
     
-    split_list = ['where2comm_irregular', 'latefusion_irregular'] # , 'latefusion_irregular'
+    split_list = ['where2comm_irregular_d_0_300ms', 'latefusion_irregular_d_0_300ms', 'latefusion_flow'] # , 'latefusion_irregular'
     single_split_name = 'single_irregular'
 
-    num_delay = 10
+    num_delay = 15
 
-    max_x = 1000 # unit is ms
+    max_x = 300 # unit is ms
     plt.figure()
     fig, ax = plt.subplots(3,1, sharex='col', sharey=False, figsize=(6,9))
     fig.suptitle(f'{title}', fontsize='x-large', y=0.94)
     fig.text(0.5, 0.06, '# Avg. time delay (ms)', ha='center', fontsize='x-large')
     fig.text(0.06, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
     ax30 = ax[0]; ax50 = ax[1]; ax70 = ax[2]
-
-    for split_name in split_list:
+    colors = ['lightskyblue', 'lightseagreen', 'tomato']
+    for split_i, split_name in enumerate(split_list):
         ap_list = []
         delays = []
-        for i in trange(num_delay+1):
-            log_file = split_name + '_d_' + str(i)
-            eval_file = os.path.join(root_dirs, log_file, f"eval_no_noise_{note}.yaml")
-            tmp_aps = []
+        method_name = split_name.split('_')[0]
+        if split_name == 'latefusion_flow':
+            method_name = 'late+flow'
+        latest_time_delay = -100.00
+        for i in tqdm(np.linspace(0, 0.3, 16)):
+            log_file = os.path.join(split_name, f"eval_no_noise_{note}_%.2f.yaml" % i)
+            if split_name == 'latefusion_flow':
+                log_file = os.path.join(split_name, f"eval_no_noise_{flow_note}_%.2f.yaml" % i)
+            eval_file = os.path.join(root_dirs, log_file)
+            
+            if not os.path.exists(eval_file):
+                continue
             with open(eval_file, "r", encoding="utf-8") as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
+            
+            try:
+                unit_time_delay = -data['avg_time_delay']
+            except:
+                unit_time_delay = i
+            
+            if (unit_time_delay - latest_time_delay) < 20:
+                continue
+            latest_time_delay = unit_time_delay
+            
+            tmp_aps = []
             tmp_aps.append(data['ap_30'])
             tmp_aps.append(data['ap_50'])
             tmp_aps.append(data['ap_70'])
-            try:
-                delays.append(-data['avg_time_delay'])
-            except:
-                delays.append(i)
-
             ap_list.append(tmp_aps)
+
+            delays.append(unit_time_delay)
 
         ap_list_np = np.array(ap_list)
         ap_list_np = np.transpose(ap_list_np)
@@ -211,9 +228,8 @@ if __name__ == "__main__":
         ap_30_list = list(ap_list_np[0])
         ap_50_list = list(ap_list_np[1])
         ap_70_list = list(ap_list_np[2])
-        method_name = split_name.split('_')[0]
-
-        color = '#1f77b4' if split_name==split_list[0] else 'g'
+        
+        color = colors[split_i]
         plt.sca(ax30); plt.plot(delays, ap_30_list, color=color, marker='+', label = method_name + '_' + 'ap30')
         plt.sca(ax50); plt.plot(delays, ap_50_list, color=color, marker='+', label = method_name + '_' + 'ap50')
         plt.sca(ax70); plt.plot(delays, ap_70_list, color=color, marker='+', label = method_name + '_' + 'ap70')
@@ -223,20 +239,20 @@ if __name__ == "__main__":
     eval_file = os.path.join(root_dirs, single_split_name, f'eval_no_noise_{note}.yaml')
     with open(eval_file, "r", encoding="utf-8") as f:
         data = yaml.load(f, Loader=yaml.FullLoader)
-    plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], 'r--', label=method_name + '_' + 'ap30')
-    plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], 'r--', label=method_name + '_' + 'ap50')
-    plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], 'r--', label=method_name + '_' + 'ap70')
+    plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], color='peru', linestyle='--', label=method_name + '_' + 'ap30')
+    plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], color='peru', linestyle='--', label=method_name + '_' + 'ap50')
+    plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], color='peru', linestyle='--', label=method_name + '_' + 'ap70')
 
-    xaxis = np.linspace(0, max_x, 11)
+    xaxis = np.linspace(0, max_x, 16)
     ax30.set_title('The Results for AP@0.3'); ax30.grid(True); 
     ax30.set_xticks(xaxis); \
-        ax30.legend(loc = 'upper right')
+        ax30.legend(loc = 'lower left')
     ax50.set_title('The Results for AP@0.5'); ax50.grid(True); 
     ax50.set_xticks(xaxis); \
-        ax50.legend(loc = 'upper right')
+        ax50.legend(loc = 'lower left')
     ax70.set_title('The Results for AP@0.7'); ax70.grid(True); 
     ax70.set_xticks(xaxis); \
-        ax70.legend(loc = 'upper right')
+        ax70.legend(loc = 'lower left')
 
     plt.savefig(save_path)
     print("=== Plt save finished!!! ===")

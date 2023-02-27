@@ -225,7 +225,7 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
             latest_sample_stamp_idx = curr_timestamp_idx
             # past k frames, pose | lidar | label(for single view confidence map generator use)
             for i in range(self.k):
-                if i == 0: # ego-past-0 与 ego-curr 是一样的
+                if i == 0: # ego-past-0 与 ego-curr 是一样的, 用于feature监督
                     data[cav_id]['past_k'][i] = data[cav_id]['curr']
                     continue
                 # sample_interval
@@ -235,12 +235,17 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
                 else:                               # non-ego sample_interval ~ B(n, p)
                     if self.is_same_sample_interval:
                         sample_interval = self.sample_interval_exp
-                    else:    
+                    else:
                         # B(n, p)
                         trails = bernoulliDist.rvs(self.binomial_n)
                         sample_interval = sum(trails)
-                    if sample_interval == 0: # 避免加载相同的帧，最差也要向前推进一帧
-                        sample_interval = 1
+                    if sample_interval==0:
+                        if i==0: # 检查past 0 的实际时间是否在curr 的后面
+                            tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0]
+                            if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0:
+                                sample_interval = 1
+                        if i>0: # 过去的几帧不要重复
+                            sample_interval = 1  
 
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = {}

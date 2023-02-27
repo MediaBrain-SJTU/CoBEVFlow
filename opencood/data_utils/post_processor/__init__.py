@@ -8,6 +8,7 @@ from opencood.data_utils.post_processor.ciassd_postprocessor import CiassdPostpr
 from opencood.data_utils.post_processor.fpvrcnn_postprocessor import FpvrcnnPostprocessor
 from opencood.data_utils.post_processor.simple_voxel_postprocessor import SimpleVoxelPostprocessor
 from opencood.data_utils.post_processor.uncertainty_voxel_postprocessor import UncertaintyVoxelPostprocessor
+from opencood.data_utils.post_processor.voxel_postprocessor_flow import VoxelPostprocessorFlow
 
 __all__ = {
     'VoxelPostprocessor': VoxelPostprocessor,
@@ -15,13 +16,14 @@ __all__ = {
     'CiassdPostprocessor': CiassdPostprocessor,
     'FpvrcnnPostprocessor': FpvrcnnPostprocessor,
     'SimpleVoxelPostprocessor' : SimpleVoxelPostprocessor,
-    'UncertaintyVoxelPostprocessor': UncertaintyVoxelPostprocessor
+    'UncertaintyVoxelPostprocessor': UncertaintyVoxelPostprocessor,
+    'VoxelPostprocessorFlow': VoxelPostprocessorFlow
 }
 
 
 def build_postprocessor(anchor_cfg, train):
     process_method_name = anchor_cfg['core_method']
-    assert process_method_name in ['VoxelPostprocessor', 'BevPostprocessor', 'CiassdPostprocessor', 'FpvrcnnPostprocessor', 'SimpleVoxelPostprocessor', 'UncertaintyVoxelPostprocessor']
+    assert process_method_name in ['VoxelPostprocessor', 'BevPostprocessor', 'CiassdPostprocessor', 'FpvrcnnPostprocessor', 'SimpleVoxelPostprocessor', 'UncertaintyVoxelPostprocessor', 'VoxelPostprocessorFlow']
     anchor_generator = __all__[process_method_name](
         anchor_params=anchor_cfg,
         train=train
