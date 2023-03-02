@@ -152,6 +152,12 @@ class PointPillarTcLoss(nn.Module):
             rm = output_dict['rm']  # [B, 14, 50, 176]
             psm = output_dict['psm'] # [B, 2, 50, 176]
 
+        # rename variable 
+        if f'psm{suffix}' in output_dict:
+            psm = output_dict[f'psm{suffix}']
+        if f'rm{suffix}' in output_dict:
+            rm = output_dict[f'rm{suffix}']
+        
         targets = target_dict['targets']                # B, H, W, 14
         box_cls_labels = target_dict['pos_equal_one']   # B, H, W, 2
 
@@ -289,7 +295,7 @@ class PointPillarTcLoss(nn.Module):
         return boxes1, boxes2
 
 
-    def logging(self, epoch, batch_id, batch_len, writer = None):
+    def logging(self, epoch, batch_id, batch_len, writer = None, suffix=""):
         """
         Print out  the loss function for current iteration.
 
@@ -309,9 +315,9 @@ class PointPillarTcLoss(nn.Module):
         conf_loss = self.loss_dict['conf_loss']
         
 
-        print_msg = ("[epoch %d][%d/%d], || Loss: %.4f || Conf Loss: %.4f"
+        print_msg = ("[epoch %d][%d/%d]%s, || Loss: %.4f || Conf Loss: %.4f"
                     " || Loc Loss: %.4f" % (
-                        epoch, batch_id + 1, batch_len,
+                        epoch, batch_id + 1, batch_len, suffix, 
                         total_loss.item(), conf_loss.item(), reg_loss.item()))
         
         if self.use_dir:
@@ -321,13 +327,13 @@ class PointPillarTcLoss(nn.Module):
         print(print_msg)
 
         if not writer is None:
-            writer.add_scalar('Regression_loss', reg_loss.item(),
+            writer.add_scalar('Regression_loss'+suffix, reg_loss.item(),
                             epoch*batch_len + batch_id)
-            writer.add_scalar('Confidence_loss', conf_loss.item(),
+            writer.add_scalar('Confidence_loss'+suffix, conf_loss.item(),
                             epoch*batch_len + batch_id)
                             
             if self.use_dir:
-                writer.add_scalar('dir_loss', dir_loss.item(),
+                writer.add_scalar('dir_loss'+suffix, dir_loss.item(),
                             epoch*batch_len + batch_id)
 
 def softmax_cross_entropy_with_logits(logits, labels):

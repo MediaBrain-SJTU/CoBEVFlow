@@ -39,6 +39,11 @@ class PointPillarMaxfusionFlow(nn.Module):
         self.reg_head = nn.Conv2d(self.out_channel, 7 * args['anchor_number'], # 384
                                   kernel_size=1)
 
+        # self.cls_head_fused = nn.Conv2d(self.out_channel, args['anchor_number'], # 384
+        #                           kernel_size=1)
+        # self.reg_head_fused = nn.Conv2d(self.out_channel, 7 * args['anchor_number'], # 384
+        #                           kernel_size=1)
+
         self.fusion_net = MaxFusion(args['fusion_args'])
 
         if 'dir_args' in args.keys():
@@ -51,8 +56,11 @@ class PointPillarMaxfusionFlow(nn.Module):
     def forward(self, data_dict, stage = 1, pairwise_t_matrix=None):
         if stage == 1:
             return self.single_forward(data_dict)
-        else:
+        elif stage == 2:
             return self.fuse_forward(data_dict, pairwise_t_matrix)
+        else:
+            print("File point_pillar_maxfusion_flow.py ERROR: \
+                stage option must be in 1(for single detection) or 2(for fuesed detection).")
         
     def single_forward(self, data_dict):    
         output_dict = {}
@@ -99,6 +107,11 @@ class PointPillarMaxfusionFlow(nn.Module):
         Parameters:
         -----------
         updated_dict : 
+            'ego' / cav_id : {
+                'updated_spatial_feature_2d' : torch.tensor, [C, H, W]
+            }
+
+        pairwise_t_matrix: 
 
         Returns:
         ---------
@@ -120,6 +133,17 @@ class PointPillarMaxfusionFlow(nn.Module):
         fused_feature = self.fusion_net(spatial_feature_2d,
                                         record_len,
                                         pairwise_t_matrix)
+
+        # ###### debug use, viz updated feature of each cav
+        # from matplotlib import pyplot as plt
+        # viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
+        # viz_content = torch.max(fused_feature[0], dim=0)[0].detach().cpu()
+        # plt.imshow(viz_content)
+        # plt.savefig(viz_save_path+'/updated_fused_feature.png')
+        # ##############
+
+        # psm = self.cls_head_fused(fused_feature)
+        # rm = self.reg_head_fused(fused_feature)
 
         psm = self.cls_head(fused_feature)
         rm = self.reg_head(fused_feature)

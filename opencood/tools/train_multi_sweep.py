@@ -55,7 +55,7 @@ def main():
 
     train_loader = DataLoader(opencood_train_dataset,
                               batch_size=hypes['train_params']['batch_size'],
-                              num_workers=8, # TODO: num_workers改回8
+                              num_workers=16, # TODO: num_workers改回8
                               collate_fn=opencood_train_dataset.collate_batch_train,
                               shuffle=True, #True, # TODO: shuffle改为True
                               pin_memory=True,
@@ -154,6 +154,7 @@ def main():
     start_time = time.time()
     print('### Training start! ###')
     epoches = hypes['train_params']['epoches']
+    supervise_single_flag = True # TODO: 修改导入方式
     proj_first = hypes['fusion']['args']['proj_first']
     # used to help schedule learning rate
 
@@ -259,20 +260,23 @@ def main():
                     final_loss = ouput_dict['recon_loss'] + detection_loss
             else:
                 final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+                if i % 10 == 0:
+                    criterion.logging(epoch, i, len(train_loader), writer)
                 if supervise_single_flag:
-                    final_loss += criterion(ouput_dict, batch_data['ego']['label_dict_single'], suffix="_single")
-                    criterion.logging(epoch, i, len(train_loader), writer, suffix="_single")
+                    final_loss += criterion(ouput_dict, batch_data['ego']['single_object_label'], suffix="_single")
+                    if i % 10 == 0:
+                        criterion.logging(epoch, i, len(train_loader), writer, suffix="_single")
 
-            if i%10 == 0:
-                criterion.logging(epoch, i, len(train_loader), writer)
-                if 'with_compensation' in hypes['model']['args'] and hypes['model']['args']['with_compensation']:
-                    if hypes['model']['args']['with_single_supervise']:
-                        print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
-                                'single_det: %.4f' % single_det_loss, '||'
-                                'detection: %.4f' % detection_loss)
-                    else:
-                        print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
-                                'detection: %.4f' % detection_loss)
+            # if i%10 == 0:
+            #     criterion.logging(epoch, i, len(train_loader), writer)
+            #     if 'with_compensation' in hypes['model']['args'] and hypes['model']['args']['with_compensation']:
+            #         if hypes['model']['args']['with_single_supervise']:
+            #             print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
+            #                     'single_det: %.4f' % single_det_loss, '||'
+            #                     'detection: %.4f' % detection_loss)
+            #         else:
+            #             print('Loss: ','recon: %.4f' % ouput_dict['recon_loss'].item(), '||', 
+            #                     'detection: %.4f' % detection_loss)
 
             # back-propagation
             final_loss.backward()

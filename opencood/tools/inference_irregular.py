@@ -40,7 +40,7 @@ def test_parser():
                         help='whether to save prediction and gt result'
                              'in npy file')
     parser.add_argument('--note', default="ir_thre_0_d_20", type=str, help='save folder name')
-    parser.add_argument('--p', default=0.02, type=float, help='binomial probability')
+    parser.add_argument('--p', default=None, type=float, help='binomial probability')
     opt = parser.parse_args()
     return opt
 
@@ -119,6 +119,12 @@ def main():
     avg_time_delay = 0.0
     avg_sample_interval = 0.0
     for i, batch_data in tenumerate(data_loader):
+        if i <19:
+            continue # TODO: debug use
+
+        if i> 50:
+            print("finished!")
+            
         if batch_data is None:
             continue
         with torch.no_grad():

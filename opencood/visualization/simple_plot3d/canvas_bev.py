@@ -253,9 +253,6 @@ class Canvas_BEV(object):
                                           color=color,
                                           thickness=box_line_thickness)
 
-
-
-
 class Canvas_BEV_heading_right(object):
     def __init__(self, 
                  canvas_shape=(800, 2800),

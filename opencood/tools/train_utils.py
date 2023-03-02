@@ -133,6 +133,37 @@ def load_saved_model(saved_path, model):
     # model.load_state_dict(ckpt_new, strict=False)
     return initial_epoch, model
 
+def load_two_parts_model(saved_path, model):
+    """
+    This function is used for intermediate+flow method, we should load two parts of pretrained model:
+    1. single detection model
+    2. fused detection head: self.cls_head_fused & self.reg_head_fused
+    """
+    file_list = glob.glob(os.path.join(saved_path, 'net_epoch_bestval_at*.pth'))
+    assert len(file_list) == 1
+    print("loading pretrained single detection model at epoch %d" % \
+            eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")))
+    trained_single_model_dict = torch.load(file_list[0], map_location='cpu')
+
+    fused_model_path = '/DB/data/sizhewei/logs/where2comm_irr_no_shift_pretrain/net_epoch_bestval_at18.pth'
+    trained_fused_model_dict = torch.load(fused_model_path, map_location='cpu')
+    
+    final_model_stat_dict = model.state_dict()
+    
+    state_dict = {k:v for k,v in trained_single_model_dict.items() if k in final_model_stat_dict.keys()}    
+    state_dict.update({
+        'cls_head_fused.weight': trained_fused_model_dict['cls_head.weight'], 
+        'cls_head_fused.bias': trained_fused_model_dict['cls_head.bias'], 
+        'reg_head_fused.weight': trained_fused_model_dict['reg_head.weight'], 
+        'reg_head_fused.bias': trained_fused_model_dict['reg_head.bias']
+    })
+
+    final_model_stat_dict.update(state_dict)
+
+    model.load_state_dict(final_model_stat_dict, strict=False)
+    return eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")), model
+
+
 def setup_train(hypes):
     """
     Create folder for saved model based on current timestep and model name

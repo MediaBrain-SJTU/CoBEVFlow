@@ -1,4 +1,4 @@
-name: pointpillar_irr_no_shift_pretrain
+name: where2comm_wo_multiscale_irr_noshift_pretrain
 
 root_dir: "/DB/public/OPV2V_irregular_npy/train/"
 validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
@@ -17,7 +17,7 @@ num_sweep_frames: &past_k 1
 
 binomial_n: 10
 binomial_p: 0
-is_no_shift: False
+is_no_shift: true
 is_same_sample_interval: false
 
 is_single_pre_trained:
@@ -163,12 +163,12 @@ model:
           c_sigma: 1.0
       agg_operator:
         mode: 'MAX' # MAX or RAIN
-      multi_scale: true
+      multi_scale: false
       layer_nums: *layer_nums
       num_filters: *num_filters
 
 loss:
-  core_method: point_pillar_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0

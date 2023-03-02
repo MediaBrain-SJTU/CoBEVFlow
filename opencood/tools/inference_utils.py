@@ -158,13 +158,22 @@ def inference_intermediate_fusion_flow(batch_data, model, dataset):
     # 要对 output_dict 里面的 spatial_feature_2d 进行 flow update
     # step1: 生成每一帧的 box 结果
     box_results = dataset.generate_pred_bbx_frames(batch_data, output_dict)
-    # step2: a. 根据检测结果生成 flow ; b. 更新 spatial feature
+    # step2: a. 根据检测结果生成 flow ; b. 更新 spatial feature  :  'updated_spatial_feature_2d' # TODO: 这里面添加一个可视化
     updated_output_dict = feature_flow_update(output_dict, box_results)
 
+    ####### debug use, viz updated feature of each cav
+    # from matplotlib import pyplot as plt
+    # viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
+    # for cav_id, cav_content in updated_output_dict.items():
+    #     viz_content = torch.max(cav_content['updated_spatial_feature_2d'], dim=0)[0].detach().cpu()
+    #     plt.imshow(viz_content)
+    #     plt.savefig(viz_save_path+f'/updated_feature_{cav_id}.png')
+    ##############
+    
     # step3: 根据 spatial feature, 融合到 ego-curr
     # step4: detection header 
     pairwise_t_matrix = batch_data['ego']['pairwise_t_matrix']
-    fused_dict = model(updated_output_dict, 2, pairwise_t_matrix)
+    fused_dict = model(updated_output_dict, stage=2, pairwise_t_matrix=pairwise_t_matrix)
     pred_box_tensor, pred_score, gt_box_tensor = dataset.post_process_for_intermediate(batch_data, fused_dict)
     
     return pred_box_tensor, pred_score, gt_box_tensor

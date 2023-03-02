@@ -3,6 +3,7 @@
 Modules to compute the matching cost and solve the corresponding LSAP.
 """
 import torch
+import torch.nn.functional as F 
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
@@ -176,6 +177,9 @@ class Matcher(nn.Module):
                     time_length = 1
                 flow = (matched_past1 - matched_past2) / time_length
 
+                if flow.shape[0] != 0:
+                    print(f"max flow is {flow.max()}")
+
                 estimate_position = matched_past1 + flow*(0-cav_content['past_k_time_diff'][0]) 
 
                 # from copy import deepcopy
@@ -222,6 +226,15 @@ class Matcher(nn.Module):
             }
         """
         pred_bbox_list = []
+        
+        ######## TODO: debug use
+        # pop up other cavs, only keep ego:
+        debug_dict = {'ego': input_dict['ego']}
+        input_dict = debug_dict.copy()
+        debug_features_dict = {'ego': features_dict['ego']}
+        features_dict = debug_features_dict.copy()
+        ##############
+
         for cav, cav_content in input_dict.items():
             if cav == 'ego':
                 updated_spatial_feature_2d = features_dict[cav]['spatial_features_2d'][0]
@@ -261,6 +274,14 @@ class Matcher(nn.Module):
 
                 selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
                 selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
+                
+                if flow.shape[0] != 0:
+                    # viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
+                    # torch.save(features_dict[cav]['spatial_features_2d'][0], viz_save_path+'/feature.pt')
+                    # torch.save(selected_box_3dcorner_past0, viz_save_path+'/bbx_list.pt')
+                    # torch.save(flow, viz_save_path+'/flow.pt')
+                    print(f"===saved, max flow is {flow.max()}===")
+                
                 updated_spatial_feature_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow)
 
             features_dict[cav].update({
@@ -269,39 +290,146 @@ class Matcher(nn.Module):
 
         return features_dict
 
-    def feature_warp(self, feature, bbox_list, flow):
+    def feature_warp(self, feature, bbox_list, flow, align_corners=False):
         """
-        feature:[C, H, W]
-        bbox_list:[num_cav, 4, 2]
-        flow:[num_cav, 2]
+        Parameters
+        -----------
+        feature: [C, H, W]
+        bbox_list: [num_cav, 4, 3] at cav coodinate system
+        flow:[num_cav, 2] at cav coodinate system
+            bbox_list & flow : x and y are exactly image coordinate
+            ------------> x
+            |
+            |
+            |
+            y
+        
+        Returns
+        -------
+        updated_feature: feature after being warped by flow, [C, H, W]
         """
-        return feature
+        # flow = torch.tensor([70, 0]).unsqueeze(0).to(feature)
+
+        if flow.shape[0] == 0 : 
+            return feature
+
+        # only use x and y
+        bbox_list = bbox_list[:, :, :2]
+
+        # scale meters to voxel, feature_length / lidar_range_length = 1.25
+        flow = flow * 1.25 
+        bbox_list = bbox_list * 1.25
+
+        # # store two parts of bbx: 1. original bbx, 2. 
+        # viz_bbx_list = bbox_list
+        # fig, ax = plt.subplots(4, 1, figsize=(5,11))
+        
+        # ######## viz-0: original feature, original bbx
+        # canvas_ori = viz_on_canvas(feature, bbox_list)
+        # plt.sca(ax[0])
+        # # plt.axis("off")
+        # plt.imshow(canvas_ori.canvas)
+        # ##########
+
         C, H, W = feature.size()
         num_cav = bbox_list.shape[0]
-        # grid = F.affine_grid(M,
-        #                      [B, C, dsize[0], dsize[1]],
-        #                      align_corners=align_corners).to(src) # .to() 统一数据格式 float32
-        basic_mat = torch.tensor([[1,0,0],[0,1,0]])
+        basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
         basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=align_corners).to(feature)
 
-        cav_t_mat = []########### get_from_flow       shape:[num_cav,2,3]        affine matrix
+        '''
+        create affine matrix:
+        ------------
+        1  0  -2*t_y/W
+        0  1  -2*t_x/H
+        0  0    1 
+        ------------
+        '''
+        flow_clone = flow.detach().clone()
+
+        affine_matrices = torch.eye(3).unsqueeze(0).repeat(flow.shape[0], 1, 1)
+        flow_clone = -2 * flow_clone / torch.tensor([feature.shape[2], feature.shape[1]]).to(feature)
+        # flow_clone = flow_clone[:, [1, 0]]
+        affine_matrices[:, :2, 2] = flow_clone 
+        
+        cav_t_mat = affine_matrices[:, :2, :]   # n, 2, 3
+        # print("cav_t_mat", cav_t_mat)
 
         cav_warp_mat = F.affine_grid(cav_t_mat,
                             [num_cav, C, H, W],
-                            align_corners=align_corners).to(src) # .to() 统一数据格式 float32
+                            align_corners=align_corners).to(feature) # .to() 统一数据格式 float32
+        
+        ######### viz-1: original feature, original bbx and flowed bbx
+        flowed_bbx_list = bbox_list + flow.unsqueeze(1).repeat(1,4,1)  # n, 4, 2
+        # viz_bbx_list = torch.cat((bbox_list, flowed_bbx_list), dim=0)
+        # canvas_hidden = viz_on_canvas(feature, viz_bbx_list)
+        # plt.sca(ax[1])
+        # # plt.axis("off") 
+        # plt.imshow(canvas_hidden.canvas)
+        ##########
 
-        x_min = torch.min(bbox_list[:,:,0],dim=1)[0] + flow[:,:0]
-        x_max = torch.max(bbox_list[:,:,0],dim=1)[0] + flow[:,:0]
-
-        y_min = torch.min(bbox_list[:,:,1],dim=1)[0] + flow[:,:1]
-        y_max = torch.max(bbox_list[:,:,1],dim=1)[0] + flow[:,:1]
+        x_min = torch.min(flowed_bbx_list[:,:,0],dim=1)[0] - 1
+        x_max = torch.max(flowed_bbx_list[:,:,0],dim=1)[0] + 1
+        y_min = torch.min(flowed_bbx_list[:,:,1],dim=1)[0] - 1
+        y_max = torch.max(flowed_bbx_list[:,:,1],dim=1)[0] + 1
+        x_min_fid = (x_min + 176).to(torch.int)
+        x_max_fid = (x_max + 176).to(torch.int)
+        y_min_fid = (y_min + 50).to(torch.int)
+        y_max_fid = (y_max + 50).to(torch.int)
 
         for cav in range(num_cav):
-            basic_warp_mat[0,x_min[cav]:x_max[cav],y_min[cav]:y_max[cav]] = cav_warp_mat[cav,x_min[cav]:x_max[cav],y_min[cav]:y_max[cav]]
+            basic_warp_mat[0,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = cav_warp_mat[cav,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]]
 
-        final_feature = F.grid_sample(feature, basic_warp_mat, align_corners=align_corners)
+        final_feature = F.grid_sample(feature.unsqueeze(0), basic_warp_mat, align_corners=align_corners)[0]
+        
+        ####### viz-2: warped feature, flowed box and warped 
+        # p_0 = torch.stack((x_min, y_min), dim=1).to(torch.int)
+        # p_1 = torch.stack((x_min, y_max), dim=1).to(torch.int)
+        # p_2 = torch.stack((x_max, y_max), dim=1).to(torch.int)
+        # p_3 = torch.stack((x_max, y_min), dim=1).to(torch.int)
+        # warp_area_bbox_list = torch.stack((p_0, p_1, p_2, p_3), dim=1)
+        # viz_bbx_list = torch.cat((flowed_bbx_list, warp_area_bbox_list), dim=0)
+        # canvas_new = viz_on_canvas(final_feature, viz_bbx_list)
+        # plt.sca(ax[2]) 
+        # # plt.axis("off") 
+        # plt.imshow(canvas_new.canvas)
+        ############## 
+
+        ####### viz-3: mask area out of warped bbx
+        # partial_feature_one = torch.zeros_like(feature)  # C, H, W
+        # for cav in range(num_cav):
+        #     partial_feature_one[:,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = 1
+        # masked_final_feature = partial_feature_one * final_feature
+        # canvas_hidden = viz_on_canvas(masked_final_feature, warp_area_bbox_list)
+        # plt.sca(ax[3]) 
+        # # plt.axis("off") 
+        # plt.imshow(canvas_hidden.canvas)
+        ##############
+
+        # plt.tight_layout()
+        # plt.savefig('result_canvas.jpg', transparent=False, dpi=400)
+        # plt.clf()
+
+        # fig, axes = plt.subplots(2, 1, figsize=(4, 4))
+        # major_ticks_x = np.linspace(0,350,8)
+        # minor_ticks_x = np.linspace(0,350,15)
+        # major_ticks_y = np.linspace(0,100,3)
+        # minor_ticks_y = np.linspace(0,100,5)
+        # for i, ax in enumerate(axes):
+        #     plt.sca(ax); #plt.axis("off")
+        #     ax.set_xticks(major_ticks_x); ax.set_xticks(minor_ticks_x, minor=True)
+        #     ax.set_yticks(major_ticks_y); ax.set_yticks(minor_ticks_y, minor=True)
+        #     ax.grid(which='major', color='w', linewidth=0.4)
+        #     ax.grid(which='minor', color='w', linewidth=0.2, alpha=0.5)
+        #     if i==0:
+        #         plt.imshow(torch.max(feature, dim=0)[0].cpu())
+        #     else:
+        #         plt.imshow(torch.max(final_feature, dim=0)[0].cpu())
+        # plt.tight_layout()
+        # plt.savefig('result_features.jpg', transparent=False, dpi=400)
+        # plt.clf()
 
         return final_feature
+
     
 def get_center_points(corner_points):
     corner_points2d = corner_points[:,:4,:2]

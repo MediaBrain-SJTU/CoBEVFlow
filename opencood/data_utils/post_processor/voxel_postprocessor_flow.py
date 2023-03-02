@@ -671,10 +671,8 @@ class VoxelPostprocessorFlow(BasePostprocessor):
 
         # convert regression map back to bounding box
         batch_box3d = self.delta_to_boxes3d(reg, anchor_box)
-        # mask = \
-        #     torch.gt(prob, self.params['target_args']['score_threshold'])
         mask = \
-            torch.gt(prob, 0.05)
+            torch.gt(prob, self.params['target_args']['score_threshold'])
         mask = mask.view(1, -1)
         mask_reg = mask.unsqueeze(2).repeat(1, 1, 7)
 
