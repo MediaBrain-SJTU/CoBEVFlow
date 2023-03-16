@@ -24,11 +24,47 @@ from tqdm import tqdm
 from tqdm.contrib import tenumerate
 from tqdm.auto import trange
 
+import subprocess
 
 run_test = True
 # from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import illegal_path_list
 compensation = True 
 
+def get_gpu_memory(device_id = 0):
+    """
+    获取当前GPU占用情况
+    """
+    try:
+        result = subprocess.check_output(
+            f"nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i {device_id}",
+            shell=True, encoding='utf-8'
+        )
+        memory_used = int(result.strip())
+    except subprocess.CalledProcessError as e:
+        print(e.output)
+        raise RuntimeError("command '{}' return with error (code {}): {}".format(e.cmd, e.returncode, e.output))
+
+    return memory_used
+
+def create_tensor_if_possible(device, gpu_id, redundancy=5):
+    """
+    根据当前GPU占用情况创建 tensor 用于填补显存空缺
+    :param device: torch.device
+    :param gpu_id: int
+    :param redundancy: int, 单位 GB
+    """
+    memory_used = get_gpu_memory(int(gpu_id))
+    memory_total = torch.cuda.get_device_properties(device).total_memory // 1024 // 1024
+    memory_free = memory_total - memory_used - 1024*redundancy  # 单位：MB, 冗余 5GB
+    
+    memory_free = 4 # TODO: debug use
+
+    if memory_free > 0:
+        size = (memory_free * 1024 * 1024 // 4)  # 每个 float 占用 4 字节
+        tensor = torch.randn(size, device=device)
+        return tensor
+    else:
+        return None
 
 def train_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
@@ -38,12 +74,15 @@ def train_parser():
                         help='Continued training path')
     parser.add_argument('--fusion_method', '-f', default="intermediate",
                         help='passed to inference.')
+    parser.add_argument('--device', '-d', default="cuda", help='cuda or cpu')
     opt = parser.parse_args()
     return opt
 
 
 def main():
     opt = train_parser()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(opt.device)
+
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
 
     print('### Dataset Building ... ###')
@@ -54,12 +93,12 @@ def main():
                                               train=False)
 
     train_loader = DataLoader(opencood_train_dataset,
-                              batch_size=hypes['train_params']['batch_size'],
-                              num_workers=16, # TODO: num_workers改回8
-                              collate_fn=opencood_train_dataset.collate_batch_train,
-                              shuffle=True, #True, # TODO: shuffle改为True
-                              pin_memory=True,
-                              drop_last=True)
+                            batch_size=hypes['train_params']['batch_size'],
+                            num_workers=8, # TODO: num_workers改回8
+                            collate_fn=opencood_train_dataset.collate_batch_train,
+                            shuffle=True, #True, # TODO: shuffle改为True
+                            pin_memory=True,
+                            drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
                             batch_size=hypes['train_params']['batch_size'],
                             num_workers=8,  # TODO: num_workers改回8
@@ -106,6 +145,17 @@ def main():
                 if name in pre_train_model:
                     value.requires_grad = False
     #############################################################################
+
+    # load trained model (single feature) TODO: delete after single 2 fused training
+    # pretrain_path = '/DB/data/sizhewei/logs/point_pillar_single_trained_fixed_2_fused/single_trained_model.pth'
+    # pre_train_model = torch.load(pretrain_path)
+    # model_diff = {k: v for k, v in model.state_dict().items() if k not in pre_train_model}
+    # print("model_diff: ", model_diff.keys())
+    # model.load_state_dict(pre_train_model, strict=False)
+    # for name, value in model.named_parameters():
+    #     if name in pre_train_model:
+    #         value.requires_grad = False
+    #####################
 
     # we assume gpu is necessary
     if torch.cuda.is_available():
@@ -154,7 +204,10 @@ def main():
     start_time = time.time()
     print('### Training start! ###')
     epoches = hypes['train_params']['epoches']
-    supervise_single_flag = True # TODO: 修改导入方式
+    supervise_single_flag = False
+    if 'supervise_single_flag' in hypes['train_params'].keys():
+        supervise_single_flag = hypes['train_params']['supervise_single_flag']
+        print(f"====== supervise_single_flag: {supervise_single_flag} ======")
     proj_first = hypes['fusion']['args']['proj_first']
     # used to help schedule learning rate
 
@@ -233,6 +286,10 @@ def main():
             # reserved_memory = 
 
             batch_data['ego']['epoch'] = epoch
+
+            # Create a tensor to fill up memory if necessary
+            # temp_tensor = create_tensor_if_possible(device, opt.device)
+
             # sample_interval += batch_data['ego']['avg_sample_interval'] # debug use 打开
             ouput_dict = model(batch_data['ego'])
 
@@ -287,6 +344,9 @@ def main():
             # start_time = time.time()
 
             torch.cuda.empty_cache()
+            # if temp_tensor is not None:
+            #     del temp_tensor
+            #     torch.cuda.empty_cache()
         
         sample_interval /= i # TODO: 打开
         sample_interval_all_epoch += sample_interval

@@ -84,7 +84,7 @@ def inference_late_fusion_flow(batch_data, model, dataset, batch_id = 0):
         }
     ''' 
     
-    updated_box = box_flow_update(box_results)
+    updated_box = box_flow_update(box_results, batch_id)
     '''
     updated_box: dict {
         'past_k_time_diff' : 
@@ -109,7 +109,7 @@ def inference_late_fusion_flow(batch_data, model, dataset, batch_id = 0):
     
     return pred_box_tensor, pred_score, gt_box_tensor, delay_box_tensor
 
-def box_flow_update(box_results):
+def box_flow_update(box_results, batch_id=0):
     """
     Calculate flow using the detection results of two adjacent frames, 
     and update the detection results using the flow.
@@ -125,7 +125,7 @@ def box_flow_update(box_results):
     """
     from opencood.tools.matcher import Matcher
     matcher = Matcher(1, 1)
-    updated_box = matcher(box_results)
+    updated_box = matcher(box_results, batch_id)
 
     return updated_box
 

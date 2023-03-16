@@ -147,8 +147,8 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
 
             # at least 1 cav should show up
             cav_list = sorted([x 
-                               for x in os.listdir(scenario_folder) if 
-                               os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
+                            for x in os.listdir(scenario_folder) if 
+                            os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
             assert len(cav_list) > 0
 
             # use the frame number as key, the full path as the values
@@ -474,7 +474,9 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                     if sample_interval == 0:
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    if self.is_no_shift and i == 0:
+                    if self.sample_interval_exp==0 \
+                        and self.is_no_shift \
+                            and i == 0:
                         data[cav_id]['past_k'][i] = data[cav_id]['curr']
                         continue
                     if self.is_same_sample_interval:

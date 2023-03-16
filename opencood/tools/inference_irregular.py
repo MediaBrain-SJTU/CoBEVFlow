@@ -83,10 +83,8 @@ def main():
 
     print('Loading Model from checkpoint')
     saved_path = opt.model_dir
-    _, model = train_utils.load_saved_model(saved_path, model)
+    _, model = train_utils.load_saved_model_diff(saved_path, model)
     model.eval()
-
-
 
     # setting noise
     np.random.seed(303)
@@ -119,11 +117,11 @@ def main():
     avg_time_delay = 0.0
     avg_sample_interval = 0.0
     for i, batch_data in tenumerate(data_loader):
-        if i <19:
-            continue # TODO: debug use
+        # if i <19:
+        #     continue # TODO: debug use
 
-        if i> 50:
-            print("finished!")
+        # if i> 50:
+        #     print("finished!")
             
         if batch_data is None:
             continue

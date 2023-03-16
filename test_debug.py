@@ -431,7 +431,7 @@ def feature_warp(feature, bbox_list, flow, align_corners=False):
     return final_feature
 
 if __name__ == '__main__':
-    viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
+    viz_save_path = ''
     feature = torch.load(viz_save_path+'/feature.pt')
     bbox_list = torch.load(viz_save_path+'/bbx_list.pt')
     flow = torch.load(viz_save_path+'/flow.pt')

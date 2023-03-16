@@ -371,13 +371,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 np.array of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
         }
         '''
-        self.times = []
-        self.times.append(time.time())
         # base_data_dict
-        base_data_dict, time4data = self.retrieve_base_data(idx)
-
-        
-        self.times.append(time.time())
+        base_data_dict = self.retrieve_base_data(idx)
 
         processed_data_dict = OrderedDict()
         processed_data_dict['ego'] = {}
@@ -435,8 +430,6 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         if self.visualize:
             projected_lidar_stack = []
         
-        self.times.append(time.time())
-        
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
             '''
@@ -488,15 +481,11 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         # {pos: array[num_cav, k, 100, 252, 2], neg: array[num_cav, k, 100, 252, 2], target: array[num_cav, k, 100, 252, 2]}
         # past_k_label_dicts = self.post_processor.merge_label_to_dict(past_k_label_dicts_stack)
 
-        self.times.append(time.time())
-
         merged_curr_feature_dict = self.merge_features_to_dict(curr_feature_stack)
         
         single_label_dict = self.post_processor.collate_batch(single_label_dict_stack)
 
         past_k_time_diffs_stack = np.array(past_k_time_diffs_stack)
-
-        self.times.append(time.time())
 
         ########## Added by Yifan Lu 2022.4.5 ################
         # filter those out of communicate range
@@ -524,8 +513,6 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         object_bbx_center[:object_stack.shape[0], :] = object_stack
         mask[:object_stack.shape[0]] = 1
 
-        self.times.append(time.time())
-
         # merge preprocessed features from different cavs into the same dict
         cav_num = len(cav_id_list)
         # past_k_features_stack: list, len is num_cav. [i] is list, len is k. [cav_id][time_id] is Orderdict, {'voxel_features': array, ...}
@@ -541,27 +528,20 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                 anchors=anchor_box,
                 mask=mask)
 
-        self.times.append(time.time())
-
-        self.times = (np.array(self.times[1:]) - np.array(self.times[:-1]))
-
-        self.times = np.hstack((self.times, time4data))
-
         processed_data_dict['ego'].update(
             {'single_object_dict_stack': single_label_dict,
-             'curr_processed_lidar': merged_curr_feature_dict,
-             'object_bbx_center': object_bbx_center,
-             'object_bbx_mask': mask,
-             'object_ids': [object_id_stack[i] for i in unique_indices],
-             'anchor_box': anchor_box,
-             'processed_lidar': merged_feature_dict,
-             'label_dict': label_dict,
-             'cav_num': cav_num,
-             'pairwise_t_matrix': pairwise_t_matrix,
-             'curr_lidar_poses': curr_lidar_poses,
-             'past_k_lidar_poses': past_k_lidar_poses,
-             'past_k_time_diffs': past_k_time_diffs_stack,
-             'times': self.times})
+            'curr_processed_lidar': merged_curr_feature_dict,
+            'object_bbx_center': object_bbx_center,
+            'object_bbx_mask': mask,
+            'object_ids': [object_id_stack[i] for i in unique_indices],
+            'anchor_box': anchor_box,
+            'processed_lidar': merged_feature_dict,
+            'label_dict': label_dict,
+            'cav_num': cav_num,
+            'pairwise_t_matrix': pairwise_t_matrix,
+            'curr_lidar_poses': curr_lidar_poses,
+            'past_k_lidar_poses': past_k_lidar_poses,
+            'past_k_time_diffs': past_k_time_diffs_stack})
 
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
@@ -884,9 +864,6 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         # pairwise transformation matrix
         pairwise_t_matrix_list = []
 
-        # for debug use:
-        time_consume = np.zeros_like(batch[0]['ego']['times'])
-
         if self.visualize:
             origin_lidar = []
         
@@ -911,7 +888,6 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
             pairwise_t_matrix_list.append(ego_dict['pairwise_t_matrix'])
             # past_k_label_list.append(ego_dict['past_k_label_dicts'])
 
-            time_consume += ego_dict['times']
             if self.visualize:
                 origin_lidar.append(ego_dict['origin_lidar'])
         
@@ -919,8 +895,8 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         # single_object_label = self.post_processor.collate_batch(single_object_label)
         single_object_label = { "pos_equal_one": torch.cat(pos_equal_one_single, dim=0),
                                 "neg_equal_one": torch.cat(neg_equal_one_single, dim=0),
-                                 "targets": torch.cat(targets_single, dim=0)}
-                                 
+                                "targets": torch.cat(targets_single, dim=0)}
+
         # collate past k single view label from different batch [B, cav_num, k, 100, 252, 2]...
         past_k_single_label_torch_dict = self.post_processor.collate_batch(past_k_label_list)
         
@@ -959,25 +935,22 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
         label_torch_dict['record_len'] = record_len
 
-        # for debug use: 
-        time_consume = torch.from_numpy(time_consume)
-
         # object id is only used during inference, where batch size is 1.
         # so here we only get the first element.
-        output_dict['ego'].update({'single_object_label': single_object_label,
-                                   'curr_processed_lidar': curr_processed_lidar_torch_dict,
-                                   'object_bbx_center': object_bbx_center,
-                                   'object_bbx_mask': object_bbx_mask,
-                                   'processed_lidar': processed_lidar_torch_dict,
-                                   'record_len': record_len,
-                                   'label_dict': label_torch_dict,
-                                   'single_past_dict': past_k_single_label_torch_dict,
-                                   'object_ids': object_ids[0],
-                                   'pairwise_t_matrix': pairwise_t_matrix,
-                                   'curr_lidar_pose': curr_lidar_pose,
-                                   'past_lidar_pose': past_k_lidar_pose,
-                                   'past_k_time_interval': past_k_time_interval,
-                                   'times': time_consume})
+        output_dict['ego'].update({
+            'single_object_label': single_object_label,
+            'curr_processed_lidar': curr_processed_lidar_torch_dict,
+            'object_bbx_center': object_bbx_center,
+            'object_bbx_mask': object_bbx_mask,
+            'processed_lidar': processed_lidar_torch_dict,
+            'record_len': record_len,
+            'label_dict': label_torch_dict,
+            'single_past_dict': past_k_single_label_torch_dict,
+            'object_ids': object_ids[0],
+            'pairwise_t_matrix': pairwise_t_matrix,
+            'curr_lidar_pose': curr_lidar_pose,
+            'past_lidar_pose': past_k_lidar_pose,
+            'past_k_time_interval': past_k_time_interval})
 
         if self.visualize:
             origin_lidar = \
@@ -1012,10 +985,9 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
         transformation_matrix_clean_torch = \
             torch.from_numpy(np.identity(4)).float()
 
-        output_dict['ego'].update({'transformation_matrix':
-                                       transformation_matrix_torch,
-                                    'transformation_matrix_clean':
-                                       transformation_matrix_clean_torch,})
+        output_dict['ego'].update({
+            'transformation_matrix': transformation_matrix_torch,
+            'transformation_matrix_clean': transformation_matrix_clean_torch})
 
         output_dict['ego'].update({
             "sample_idx": batch[0]['ego']['sample_idx'],

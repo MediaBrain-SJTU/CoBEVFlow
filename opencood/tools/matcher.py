@@ -100,15 +100,15 @@ class Matcher(nn.Module):
         self.thre = thre
 
     @torch.no_grad()
-    def forward(self, input_dict, fusion='box', feature=None):
+    def forward(self, input_dict, fusion='box', feature=None, batch_id=0):
         if fusion=='box':
-            return self.forward_box(input_dict)
+            return self.forward_box(input_dict, batch_id)
         elif fusion=='feature':
             return self.forward_feature(input_dict, feature)
         else:
             print("Attention, fusion method must be in box or feature!")
 
-    def forward_box(self, input_dict):
+    def forward_box(self, input_dict, batch_id):
         """ Performs the matching
         input_dict: 
             {
@@ -228,11 +228,11 @@ class Matcher(nn.Module):
         pred_bbox_list = []
         
         ######## TODO: debug use
-        # pop up other cavs, only keep ego:
-        debug_dict = {'ego': input_dict['ego']}
-        input_dict = debug_dict.copy()
-        debug_features_dict = {'ego': features_dict['ego']}
-        features_dict = debug_features_dict.copy()
+        # # pop up other cavs, only keep ego:
+        # debug_dict = {'ego': input_dict['ego']}
+        # input_dict = debug_dict.copy()
+        # debug_features_dict = {'ego': features_dict['ego']}
+        # features_dict = debug_features_dict.copy()
         ##############
 
         for cav, cav_content in input_dict.items():
@@ -272,15 +272,17 @@ class Matcher(nn.Module):
                     time_length = 1
                 flow = (matched_past1 - matched_past2) / time_length
 
+                # TODO: flow * (0-past_k[0])
+                flow = flow*(0-cav_content['past_k_time_diff'][0])
                 selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
                 selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
                 
-                if flow.shape[0] != 0:
-                    # viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
-                    # torch.save(features_dict[cav]['spatial_features_2d'][0], viz_save_path+'/feature.pt')
-                    # torch.save(selected_box_3dcorner_past0, viz_save_path+'/bbx_list.pt')
-                    # torch.save(flow, viz_save_path+'/flow.pt')
-                    print(f"===saved, max flow is {flow.max()}===")
+                # if flow.shape[0] != 0:
+                #     viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow'
+                #     torch.save(features_dict[cav]['spatial_features_2d'][0], viz_save_path+'/feature.pt')
+                #     torch.save(selected_box_3dcorner_past0, viz_save_path+'/bbx_list.pt')
+                #     torch.save(flow, viz_save_path+'/flow.pt')
+                #     print(f"===saved, max flow is {flow.max()}===")
                 
                 updated_spatial_feature_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow)
 

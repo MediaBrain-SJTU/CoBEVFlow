@@ -101,9 +101,9 @@ class MaxFusion(nn.Module):
                                             (H, W))
             out.append(torch.max(neighbor_feature, dim=0)[0])
 
-            # TODO: debug use
-            viz_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out'
-            torch.save(neighbor_feature, viz_path+'/neighbor_feature.pt')
+            # # TODO: debug use
+            # viz_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out'
+            # torch.save(neighbor_feature, viz_path+'/neighbor_feature.pt')
 
         out = torch.stack(out)
         

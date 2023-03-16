@@ -155,12 +155,12 @@ class PointPillarWhere2commAttn(nn.Module):
             spatial_features_2d = self.naive_compressor(spatial_features_2d)
 
         ####### debug use, viz feature of each cav
-        from matplotlib import pyplot as plt
-        viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow/where2comm'
-        for i in range(spatial_features_2d.shape[0]):
-            viz_content = torch.max(spatial_features_2d[i], dim=0)[0].detach().cpu()
-            plt.imshow(viz_content)
-            plt.savefig(viz_save_path+f'/updated_feature_{i}.png')
+        # from matplotlib import pyplot as plt
+        # viz_save_path = '/DB/rhome/sizhewei/percp/OpenCOOD/opencood/viz_out/debug_4_feature_flow/where2comm'
+        # for i in range(spatial_features_2d.shape[0]):
+        #     viz_content = torch.max(spatial_features_2d[i], dim=0)[0].detach().cpu()
+        #     plt.imshow(viz_content)
+        #     plt.savefig(viz_save_path+f'/updated_feature_{i}.png')
         ##############
         
         # dcn
@@ -235,9 +235,9 @@ class PointPillarWhere2commAttn(nn.Module):
                                                 [self.shrink_conv, self.cls_head, self.reg_head])            
 
         ####### debug use, viz fused feature of where2comm
-        viz_content = torch.max(fused_feature[0], dim=0)[0].detach().cpu()
-        plt.imshow(viz_content)
-        plt.savefig(viz_save_path+'/fused_feature.png')  
+        # viz_content = torch.max(fused_feature[0], dim=0)[0].detach().cpu()
+        # plt.imshow(viz_content)
+        # plt.savefig(viz_save_path+'/fused_feature.png')  
         ##############
         
         # print('fused_feature: ', fused_feature.shape)
@@ -267,6 +267,6 @@ class PointPillarWhere2commAttn(nn.Module):
                        'comm_rate': communication_rates
                        })
         
-        output_dict.update(result_dict)  # TODO: 这个现在是空字典  
+        output_dict.update(result_dict) 
         
         return output_dict

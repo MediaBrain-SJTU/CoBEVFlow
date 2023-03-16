@@ -38,11 +38,11 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=5,
+    parser.add_argument('--save_vis_interval', type=int, default=40,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
-                             'in npy file')
+                            'in npy file')
     parser.add_argument('--note', default="flow_thre_20_d_300", type=str, help='save folder name')
     parser.add_argument('--p', default=None, type=float, help='binomial probability')
     opt = parser.parse_args()
@@ -93,7 +93,7 @@ def main():
     # else:
     #     _, model = train_utils.load_saved_model(saved_path, model)
     
-    _, model = train_utils.load_saved_model(saved_path, model)
+    _, model = train_utils.load_saved_model_diff(saved_path, model)
     
     model.eval()
 
@@ -131,9 +131,6 @@ def main():
         # if i <19:
         #     continue # TODO: debug use
 
-        if i> 20:
-            print("finished!")
-            
         if batch_data is None:
             continue
         with torch.no_grad():
@@ -182,8 +179,6 @@ def main():
                     inference_utils.inference_intermediate_fusion_flow(batch_data,
                                                                 model,
                                                                 opencood_dataset)
-                if i==20:
-                    print(i)
 
             elif opt.fusion_method == 'no':
                 pred_box_tensor, pred_score, gt_box_tensor = \

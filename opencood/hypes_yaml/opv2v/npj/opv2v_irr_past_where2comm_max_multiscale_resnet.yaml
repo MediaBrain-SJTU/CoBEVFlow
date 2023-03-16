@@ -1,4 +1,4 @@
-name: where2comm_wo_multiscale_irr_noshift_pretrain
+name: where2comm_max_multiscale_resnet_32ch
 
 root_dir: "/DB/public/OPV2V_irregular_npy/train/"
 validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
@@ -21,20 +21,21 @@ is_no_shift: true
 is_same_sample_interval: false
 
 is_single_pre_trained:
-  pre_train_flag: False
+  pre_train_flag: false
   # pre_train_fix: false
   # pre_train_path: '/GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25'
   # pre_train_epoch: 24
 
-comm_range: 1000
+comm_range: 200
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 1 # TODO: 调整batch_size
-  epoches: 20
+  batch_size: &batch_size 2 # TODO: 调整batch_size
+  epoches: 30
   eval_freq: 1
   save_freq: 1
   max_cav: &max_cav 5
+  supervise_single_flag: true
 
 fusion:
   core_method: 'IntermediateFusionDatasetIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
@@ -132,38 +133,41 @@ model:
     #   n_blocks: 1
 
     rain_model:
-      d_ff: 256
-      h: 8
-      num_layers: 1
-      neighbor_range: 2
-      dropout: 0
-      max_len: 300
-      input_dim: 64
+      # d_ff: 256
+      # h: 8
+      # num_layers: 1
+      # neighbor_range: 2
+      # dropout: 0
+      # max_len: 300
+      # input_dim: 64
       voxel_size: *voxel_size
       downsample_rate: 1
+      in_channels: 256
       n_head: 8
+      dropout_rate: 0
       only_attention: true
-      fusion_setting:
-        sweep_length: *past_k
-        if_spatial_encoding : False
-        if_ego_time_encoding : false
-        if_nonego_time_encoding : true
-        if_sensor_encoding : False
-        if_time_attn_aggre : true
-        if_spatial_conv : False
-        if_dotproductattn : True
-        use_mask : True
-        confidence_fetch : false
+      # fusion_setting:
+      #   sweep_length: *past_k
+      #   if_spatial_encoding : False
+      #   if_ego_time_encoding : false
+      #   if_nonego_time_encoding : true
+      #   if_sensor_encoding : False
+      #   if_time_attn_aggre : true
+      #   if_spatial_conv : False
+      #   if_dotproductattn : True
+      #   use_mask : True
+      #   confidence_fetch : false
       communication:
         num_blocks_thres: 1  # 有效地块占总地块的比例最高值 [0, 1]
         round: 1
-        thre: 0.10
+        thre: 0.01
         gaussian_smooth:
           k_size: 5
           c_sigma: 1.0
       agg_operator:
         mode: 'MAX' # MAX or RAIN
-      multi_scale: false
+        feature_dim: 256
+      multi_scale: True
       layer_nums: *layer_nums
       num_filters: *num_filters
 

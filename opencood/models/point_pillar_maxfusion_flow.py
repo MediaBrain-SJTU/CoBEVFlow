@@ -10,6 +10,8 @@ import torch.nn as nn
 from opencood.models.sub_modules.pillar_vfe import PillarVFE
 from opencood.models.sub_modules.point_pillar_scatter import PointPillarScatter
 from opencood.models.sub_modules.base_bev_backbone import BaseBEVBackbone
+from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
+from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
 
 from opencood.models.fuse_modules.max_fuse import MaxFusion
@@ -24,8 +26,12 @@ class PointPillarMaxfusionFlow(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
-        self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
-        
+        # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
+            self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
+        else:
+            self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+
         self.out_channel = sum(args['base_bev_backbone']['num_upsample_filter'])
 
         self.shrink_flag = False
@@ -33,6 +39,8 @@ class PointPillarMaxfusionFlow(nn.Module):
             self.shrink_flag = True
             self.shrink_conv = DownsampleConv(args['shrink_header'])
             self.out_channel = args['shrink_header']['dim'][-1]
+
+        self.rain_fusion = raindrop_fuse(args['fusion_args'])
 
         self.cls_head = nn.Conv2d(self.out_channel, args['anchor_number'], # 384
                                   kernel_size=1)
@@ -133,6 +141,10 @@ class PointPillarMaxfusionFlow(nn.Module):
         fused_feature = self.fusion_net(spatial_feature_2d,
                                         record_len,
                                         pairwise_t_matrix)
+
+        # fused_feature = self.rain_fusion(spatial_feature_2d,
+        #                                 record_len,
+        #                                 pairwise_t_matrix)
 
         # ###### debug use, viz updated feature of each cav
         # from matplotlib import pyplot as plt

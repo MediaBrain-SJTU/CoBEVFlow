@@ -79,7 +79,7 @@ def load_saved_model(saved_path, model):
     Parameters
     __________
     saved_path : str
-       model saved path
+        model saved path
     model : opencood object
         The model instance.
 
@@ -115,7 +115,7 @@ def load_saved_model(saved_path, model):
         print('resuming by loading epoch %d' % initial_epoch)
         model.load_state_dict(torch.load(
             os.path.join(saved_path,
-                         'net_epoch%d.pth' % initial_epoch), map_location='cpu'), strict=False)
+                'net_epoch%d.pth' % initial_epoch), map_location='cpu'), strict=False)
 
     # ckpt = torch.load(os.path.join(saved_path, 'net_epoch%d.pth' % initial_epoch), map_location='cpu')
     # keys = [x for x in ckpt if 'resnet' in x]
@@ -132,6 +132,67 @@ def load_saved_model(saved_path, model):
     #         ckpt_new[k] = ckpt[k]
     # model.load_state_dict(ckpt_new, strict=False)
     return initial_epoch, model
+
+def load_saved_model_diff(saved_path, model):
+    """
+    Load saved model, model and checkpoint may not be totally same.
+
+    Parameters
+    __________
+    saved_path : str
+        model saved path
+    model : opencood object
+        The model instance.
+
+    Returns
+    -------
+    model : opencood object
+        The model instance loaded pretrained params.
+    """
+    assert os.path.exists(saved_path), '{} not found'.format(saved_path)
+
+    def findLastCheckpoint(save_dir):
+        file_list = glob.glob(os.path.join(save_dir, '*epoch*.pth'))
+        if file_list:
+            epochs_exist = []
+            for file_ in file_list:
+                result = re.findall(".*epoch(.*).pth.*", file_)
+                epochs_exist.append(int(result[0]))
+            initial_epoch_ = max(epochs_exist)
+        else:
+            initial_epoch_ = 0
+        return initial_epoch_
+
+    file_list = glob.glob(os.path.join(saved_path, 'net_epoch_bestval_at*.pth'))
+    if file_list:
+        assert len(file_list) == 1
+        print("resuming best validation model at epoch %d" % \
+                eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")))
+        trained_model_dict = torch.load(file_list[0] , map_location='cpu')
+        diff_keys = {k:v for k, v in trained_model_dict.items() if k not in model.state_dict()}
+        if diff_keys:
+            print(f"!!! Trained model has keys: {diff_keys.keys()}, \
+                which are not in the model you have created!!!")
+        diff_keys = {k:v for k, v in model.state_dict().items() if k not in trained_model_dict.keys()}
+        if diff_keys:
+            print(f"!!! Created model has keys: {diff_keys.keys()}, \
+                which are not in the model you have trained!!!")
+        model.load_state_dict(trained_model_dict, strict=False)
+        return eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")), model
+
+    initial_epoch = findLastCheckpoint(saved_path)
+    if initial_epoch > 0:
+        print('resuming by loading epoch %d' % initial_epoch)
+        trained_model_dict = torch.load(\
+            os.path.join(saved_path, 'net_epoch%d.pth' % initial_epoch), map_location='cpu')
+        diff_keys = {k:v for k, v in trained_model_dict.items() if k not in model.state_dict()}
+        if diff_keys:
+            print(f"!!! Trained model has keys: {diff_keys.keys()}, \
+                which are not in the model you have created!!!")
+        model.load_state_dict(trained_model_dict, strict=False)
+
+    return initial_epoch, model
+
 
 def load_two_parts_model(saved_path, model):
     """

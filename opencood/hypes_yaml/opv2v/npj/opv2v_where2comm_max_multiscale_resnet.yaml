@@ -1,4 +1,5 @@
-name: opv2v_npj_where2comm_max_multiscale_resnet
+name: where2comm_max_multiscale_resnet_64ch
+
 root_dir: "/DB/public/OPV2V_w_npy/train/"
 validate_dir: "/DB/public/OPV2V_w_npy/validate"
 test_dir: "/DB/public/OPV2V_w_npy/test"
@@ -20,7 +21,7 @@ is_single_pre_trained:
   # pre_train_path: /GPFS/rhome/yifanlu/workspace/OpenCOODv2/opencood/logs/point_pillar_late_fusion_channel256_2022_12_14_21_52_25
   # pre_train_epoch: 24
 
-comm_range: 1000
+comm_range: 200
 
 yaml_parser: "load_point_pillar_params"
 train_params:
@@ -29,9 +30,10 @@ train_params:
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 5
+  supervise_single_flag: true
 
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
+  core_method: 'IntermediateFusionDatasetMultisweep' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset, IntermediateFusionDatasetMultisweep supported
   args:
     proj_first: false
     clip_pc: false
@@ -65,8 +67,8 @@ postprocess:
   gt_range: *cav_lidar
   anchor_args:
     cav_lidar_range: *cav_lidar
-    l: 4.5
-    w: 2
+    l: 3.9
+    w: 1.6
     h: 1.56
     r: [0, 90]
     feature_stride: 2
@@ -81,7 +83,7 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_where2comm
+  core_method: point_pillar_where2comm_attn
   
   args:
     voxel_size: *voxel_size
@@ -100,7 +102,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: False
+      resnet: true
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -113,7 +115,7 @@ model:
       kernal_size: [ 3 ]
       stride: [ 1 ]
       padding: [ 1 ]
-      dim: [ 256 ]
+      dim: [ 256 ]            # TODO:
       input_dim: 384 # 128 * 3
     
     # dcn:
@@ -124,7 +126,7 @@ model:
     #   kernel_size : [3]
     #   n_blocks: 1
 
-    fusion_args:
+    rain_model # fusion_args: 
       voxel_size: *voxel_size
       downsample_rate: 1
       in_channels: 256
@@ -145,13 +147,13 @@ model:
         # with_spe: true
         # with_scm: true
 
-      multi_scale: False
+      multi_scale: True
       layer_nums: *layer_nums
       num_filters: *num_filters
 
 
 loss:
-  core_method: point_pillar_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0

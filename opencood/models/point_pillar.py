@@ -10,6 +10,7 @@ import torch.nn as nn
 from opencood.models.sub_modules.pillar_vfe import PillarVFE
 from opencood.models.sub_modules.point_pillar_scatter import PointPillarScatter
 from opencood.models.sub_modules.base_bev_backbone import BaseBEVBackbone
+from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
 
 class PointPillar(nn.Module):
@@ -22,7 +23,14 @@ class PointPillar(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
-        self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        
+        # Base BEV Backbone -> ResNetBEVBackbone
+        # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
+            self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
+        else:
+            self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        ############################################
         
         self.out_channel = sum(args['base_bev_backbone']['num_upsample_filter'])
 
@@ -33,14 +41,14 @@ class PointPillar(nn.Module):
             self.out_channel = args['shrink_header']['dim'][-1]
 
         self.cls_head = nn.Conv2d(self.out_channel, args['anchor_number'], # 384
-                                  kernel_size=1)
+                                kernel_size=1)
         self.reg_head = nn.Conv2d(self.out_channel, 7 * args['anchor_number'], # 384
-                                  kernel_size=1)
+                                kernel_size=1)
 
         if 'dir_args' in args.keys():
             self.use_dir = True
             self.dir_head = nn.Conv2d(self.out_channel, args['dir_args']['num_bins'] * args['anchor_number'],
-                                  kernel_size=1) # BIN_NUM = 2， # 384
+                                kernel_size=1) # BIN_NUM = 2， # 384
         else:
             self.use_dir = False
 
