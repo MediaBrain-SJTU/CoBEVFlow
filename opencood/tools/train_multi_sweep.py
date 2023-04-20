@@ -74,6 +74,8 @@ def train_parser():
                         help='Continued training path')
     parser.add_argument('--fusion_method', '-f', default="intermediate",
                         help='passed to inference.')
+    parser.add_argument('--pretrained_path', default='',
+                        help='The path of the model need to be fine tuned.')
     parser.add_argument('--device', '-d', default="cuda", help='cuda or cpu')
     opt = parser.parse_args()
     return opt
@@ -94,14 +96,14 @@ def main():
 
     train_loader = DataLoader(opencood_train_dataset,
                             batch_size=hypes['train_params']['batch_size'],
-                            num_workers=8, # TODO: num_workers改回8
+                            num_workers=16, # TODO: num_workers改回8
                             collate_fn=opencood_train_dataset.collate_batch_train,
                             shuffle=True, #True, # TODO: shuffle改为True
                             pin_memory=True,
                             drop_last=True)
     val_loader = DataLoader(opencood_validate_dataset,
                             batch_size=hypes['train_params']['batch_size'],
-                            num_workers=8,  # TODO: num_workers改回8
+                            num_workers=16,  # TODO: num_workers改回8
                             collate_fn=opencood_train_dataset.collate_batch_train,
                             shuffle=True,   # TODO: shuffle改为True
                             pin_memory=True,
@@ -109,15 +111,6 @@ def main():
     end_time = time.time()
     print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
     start_time = time.time()
-    # for debug use:
-    #############################################################################
-    # init_epoch = 0
-    # epoches = hypes['train_params']['epoches']
-    # for epoch in range(init_epoch, max(epoches, init_epoch)):
-    #     for i, batch_data in enumerate(train_loader):
-    #         if batch_data is None:
-    #             continue
-    #############################################################################
     
     print('### Creating Model ... ###')
     model = train_utils.create_model(hypes)
@@ -146,17 +139,6 @@ def main():
                     value.requires_grad = False
     #############################################################################
 
-    # load trained model (single feature) TODO: delete after single 2 fused training
-    # pretrain_path = '/DB/data/sizhewei/logs/point_pillar_single_trained_fixed_2_fused/single_trained_model.pth'
-    # pre_train_model = torch.load(pretrain_path)
-    # model_diff = {k: v for k, v in model.state_dict().items() if k not in pre_train_model}
-    # print("model_diff: ", model_diff.keys())
-    # model.load_state_dict(pre_train_model, strict=False)
-    # for name, value in model.named_parameters():
-    #     if name in pre_train_model:
-    #         value.requires_grad = False
-    #####################
-
     # we assume gpu is necessary
     if torch.cuda.is_available():
         model.to(device)
@@ -166,34 +148,36 @@ def main():
 
     # optimizer setup
     optimizer = train_utils.setup_optimizer(hypes, model, is_pre_trained)
-    # lr scheduler setup
     
-
+    # for fine tune:
+    if opt.pretrained_path:
+        saved_path = opt.pretrained_path
+        pretrained_model_dict = torch.load(saved_path, map_location='cpu')
+        diff_keys = {k:v for k, v in pretrained_model_dict.items() if k not in model.state_dict()}
+        if diff_keys:
+            print(f"!!! PreTrained model has keys: {diff_keys.keys()}, \
+                which are not in the model you have created!!!")
+        diff_keys = {k:v for k, v in model.state_dict().items() if k not in pretrained_model_dict.keys()}
+        if diff_keys:
+            print(f"!!! Created model has keys: {diff_keys.keys()}, \
+                which are not in the model you have trained!!!")
+        model.load_state_dict(pretrained_model_dict, strict=False)
+    
+    # lr scheduler setup
     # if we want to train from last checkpoint.
     if opt.model_dir:
         saved_path = opt.model_dir
-        init_epoch, model = train_utils.load_saved_model(saved_path, model)
+        init_epoch, model = train_utils.load_saved_model_diff(saved_path, model)
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer, init_epoch=init_epoch)
 
     else:
         init_epoch = 0
-        # if we train the model from scratch, we need to create a folder
-        # to save the model,
-        saved_path = train_utils.setup_train(hypes)
+        # TODO: switch between DB and v100/a6000
+        # log_path = '/remote-home/share/sizhewei'
+        log_path = '/DB/data/sizhewei'
+        # if we train the model from scratch, we need to create a folder to save the model
+        saved_path = train_utils.setup_train(hypes, log_path)
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer)
-
-    # is_fix = False # TODO: pretrain 记得删除
-    # pretrain_path = "/DB/data/sizhewei/logs/opv2v_npj_raindrop_attn_d_0_swps_1_bs_2_w_resnet_w_multiscale_2023_02_04_22_46_26_pretrain"
-    # initial_epoch = 17
-    # if is_fix:
-    #     pre_train_model = torch.load(os.path.join(pretrain_path, 'net_epoch%d.pth' % initial_epoch))
-    #     model.load_state_dict(pre_train_model, strict=False)
-    #     print("### Pre-trained loaded successfully! ###".format(os.path.join(opt.model_dir, 'net_epoch%d.pth' % initial_epoch)))
-    #     for name, value in model.named_parameters():
-    #         if name == 'cls_head.weight' or name == 'cls_head.bias':
-    #             continue # TODO: pretrain 记得删除
-    #         if name in pre_train_model:
-    #             value.requires_grad = False
 
     end_time = time.time()
     print("=== Time consumed: %.1f minutes. ===" % ((end_time - start_time)/60))
@@ -256,7 +240,7 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
-            # if i==0: # TODO: debug 用
+            # if i==1: # TODO: debug 用
             #     break
             if batch_data is None:
                 continue
@@ -287,10 +271,20 @@ def main():
 
             batch_data['ego']['epoch'] = epoch
 
+            ############ debug ###############
+            # debug_path = '/remote-home/share/sizhewei/logs/where2comm_flow_debug/viz_flow'
+            # if not os.path.exists(debug_path):
+            #     os.makedirs(debug_path)
+            # flow_map = batch_data['ego']['label_dict']
+            # torch.save(flow_map, os.path.join(debug_path, 'flow_gt.pt'))
+            ##################################
+
             # Create a tensor to fill up memory if necessary
             # temp_tensor = create_tensor_if_possible(device, opt.device)
 
             # sample_interval += batch_data['ego']['avg_sample_interval'] # debug use 打开
+            # TODO: dataset parameter is only used for training flow module
+            # ouput_dict = model(batch_data['ego'], opencood_train_dataset)
             ouput_dict = model(batch_data['ego'])
 
             # end_time = time.time()
@@ -301,6 +295,10 @@ def main():
                 teacher_output_dict = teacher_model(batch_data['ego'])
                 ouput_dict.update(teacher_output_dict)
 
+            # # only for SyncNet training
+            # final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
+            # if i % 10 == 0:
+            #     criterion.logging(epoch, i, len(train_loader), writer)
 
             # first argument is always your output dictionary,
             # second argument is always your label dictionary.
@@ -366,6 +364,8 @@ def main():
 
                     batch_data = train_utils.to_device(batch_data, device)
                     batch_data['ego']['epoch'] = epoch
+                    # TODO: dataset parameter is only used for training flow module
+                    # ouput_dict = model(batch_data['ego'], opencood_validate_dataset)
                     ouput_dict = model(batch_data['ego'])
 
                     if kd_flag:

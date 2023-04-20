@@ -1124,7 +1124,6 @@ class LateFusionDatasetIrregular4Flow(intermediate_fusion_dataset_opv2v_irregula
     def post_process_updated(self, data_dict, output_dict):
         return self.post_processor.post_process_fuse_updated_frame(data_dict, output_dict)
 
-
     def post_process_for_intermediate(self, data_dict, output_dict):
         pred_box_tensor, pred_score = \
             self.post_processor.post_process_for_intermediate(data_dict, output_dict)

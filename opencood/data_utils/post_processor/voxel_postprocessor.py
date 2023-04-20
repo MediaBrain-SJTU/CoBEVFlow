@@ -21,6 +21,8 @@ from opencood.utils.box_overlaps import bbox_overlaps
 from opencood.visualization import vis_utils
 from opencood.utils.common_utils import limit_period
 
+from collections import OrderedDict
+
 
 class VoxelPostprocessor(BasePostprocessor):
     def __init__(self, anchor_params, train):
@@ -268,6 +270,155 @@ class VoxelPostprocessor(BasePostprocessor):
         return {'targets': targets,
                 'pos_equal_one': pos_equal_one,
                 'neg_equal_one': neg_equal_one}
+
+    """
+    Added by Sizhewei @ 2023-04-15
+    Generate box results on each cav's past_0 time
+    """
+    def single_post_process(self, psm_single, rm_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, num_sweeps=2):
+        """
+        Process the outputs of the model to 2D/3D bounding box.
+        Step1: convert each cav's output to bounding box format
+        Step2: project the bounding boxes to ego space.
+        Step:3 NMS
+
+        For early and intermediate fusion,
+            data_dict only contains ego.
+
+        For late fusion,
+            data_dcit contains all cavs, so we need transformation matrix.
+
+
+        Parameters
+        ----------
+        data_dict : dict
+            
+        output_dict :dict
+            The dictionary containing the output of the model.
+
+        Returns
+        -------
+        {
+            'past_k_time_diff' : (k, )
+            [0] : {
+                pred_box_3dcorner_tensor: The prediction bounding box tensor after NMS. (n, 8, 3)
+                pred_box_center_tensor : (n, 7)
+                scores: (n, )
+            },
+            ...
+            [k-1] : { ... }
+        }
+        """
+        self.k = num_sweeps
+
+        box_results = OrderedDict()
+        # for cav_id, cav_content in data_dict.items():
+
+        box_results.update({
+            'past_k_time_diff': past_time_diff
+        })
+        # the transformation matrix to ego space
+        # transformation_matrix = cav_content['transformation_matrix'] # no clean
+        transformation_matrix = trans_mat_pastk_2_past0.to(torch.float32)
+
+        # classification probability
+        prob = psm_single  # k,2,100,352
+        prob = torch.sigmoid(prob.permute(0, 2, 3, 1))
+        prob = prob.reshape(self.k, -1) # (k, HxWx2)
+
+        # regression map
+        reg = rm_single # (k,14,100,352)
+
+        # convert regression map back to bounding box
+        batch_box3d = self.delta_to_boxes3d(reg, anchor_box) # (k, HxWx2, 7)
+        mask = \
+            torch.gt(prob, self.params['target_args']['score_threshold']) 
+        mask = mask.view(self.k, -1) # (k, HxWx2)
+        mask_reg = mask.unsqueeze(2).repeat(1, 1, 7) # (k, HxWx2, 7)
+
+        # during validation/testing, the batch size should be 1
+        # assert batch_box3d.shape[0] == 1
+        
+        for i in range(self.k):  # 遍历所有的时间戳
+            box_results[i] = OrderedDict()
+            unit_trans_mat = transformation_matrix[i]
+            boxes3d = torch.masked_select(batch_box3d[i],
+                                        mask_reg[i]).view(-1, 7)
+            scores = torch.masked_select(prob[i], mask[i])
+
+            # convert output to bounding box
+            if len(boxes3d) != 0:
+                # (N, 8, 3)
+                boxes3d_corner = \
+                    box_utils.boxes_to_corners_3d(boxes3d,
+                                                order=self.params['order'])
+                # STEP 2
+                # (N, 8, 3)
+                projected_boxes3d = \
+                    box_utils.project_box3d(boxes3d_corner,
+                                            unit_trans_mat)
+
+                # backup_projected_boxes3d = projected_boxes3d.clone()
+                # backup_scores = scores.clone()
+
+                # convert 3d bbx to 2d, (N,4)
+                projected_boxes2d = \
+                    box_utils.corner_to_standup_box_torch(projected_boxes3d)
+                # (N, 5)
+                boxes2d_score = \
+                    torch.cat((projected_boxes2d, scores.unsqueeze(1)), dim=1)
+
+                # pred_box2d_list.append(boxes2d_score)
+                # pred_box3d_list.append(projected_boxes3d)
+
+                # scores = boxes2d_score[:, -1]
+
+                # remove large bbx
+                keep_index_1 = box_utils.remove_large_pred_bbx(projected_boxes3d)
+                keep_index_2 = box_utils.remove_bbx_abnormal_z(projected_boxes3d)
+                keep_index = torch.logical_and(keep_index_1, keep_index_2)
+
+                projected_boxes3d = projected_boxes3d[keep_index]
+                scores = scores[keep_index]
+
+                # STEP3
+                # nms
+                keep_index = box_utils.nms_rotated(projected_boxes3d,
+                                                scores,
+                                                self.params['nms_thresh']
+                                                )
+                pred_box3d_tensor = projected_boxes3d[keep_index]
+                # select cooresponding score
+                scores = scores[keep_index]
+
+                # filter out the prediction out of the range.
+                range_mask = \
+                    box_utils.get_mask_for_boxes_within_range_torch(pred_box3d_tensor, self.params['gt_range'])
+                pred_box_3dcorner_tensor = pred_box3d_tensor[range_mask, :, :]
+                scores = scores[range_mask]
+                pred_box_center_tensor = box_utils.corner_to_center_torch(pred_box_3dcorner_tensor, self.params['order'])
+
+                assert scores.shape[0] == pred_box_3dcorner_tensor.shape[0]
+
+                # if scores.shape[0] == 0: # 没有bbx剩下，那么保存之前剩的框
+                #     pred_box_3dcorner_tensor = backup_projected_boxes3d
+                #     scores = backup_scores
+                #     pred_box_center_tensor = box_utils.corner_to_center_torch(pred_box_3dcorner_tensor, self.params['order'])
+
+                box_results[i].update({
+                    'pred_box_3dcorner_tensor': pred_box_3dcorner_tensor, 
+                    'pred_box_center_tensor': pred_box_center_tensor,
+                    'scores': scores
+                })
+
+            else:
+                box_results[i].update({
+                    'pred_box_3dcorner_tensor': torch.Tensor(0, 8, 3).to(scores.device), 
+                    'pred_box_center_tensor': torch.Tensor(0, 7).to(scores.device),
+                    'scores': torch.Tensor(0).to(scores.device)
+                })
+
+        return box_results
 
     def post_process(self, data_dict, output_dict):
         """

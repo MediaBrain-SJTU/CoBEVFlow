@@ -43,6 +43,7 @@ def test_parser():
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                             'in npy file')
+    parser.add_argument('--config_suffix', default='', type=str, help='config suffix')
     parser.add_argument('--note', default="flow_thre_20_d_300", type=str, help='save folder name')
     parser.add_argument('--p', default=None, type=float, help='binomial probability')
     opt = parser.parse_args()
@@ -54,9 +55,9 @@ def main():
     # if_save_pt = False
     opt = test_parser()
 
-    assert opt.fusion_method in ['late', 'late_flow', 'early', 'intermediate', 'intermediate_flow', 'no', 'no_w_uncertainty'] 
+    assert opt.fusion_method in ['late', 'late_flow', 'early', 'intermediate', 'intermediate_flow', 'intermediate_flow_module', 'no', 'no_w_uncertainty'] 
 
-    hypes = yaml_utils.load_yaml(None, opt)
+    hypes = yaml_utils.load_yaml(None, opt, config_suffix=opt.config_suffix)
     
     hypes['validate_dir'] = hypes['test_dir']
     if "OPV2V" in hypes['test_dir'] or "v2xsim" in hypes['test_dir']:
@@ -128,8 +129,9 @@ def main():
     avg_time_delay = 0.0
     avg_sample_interval = 0.0
     for i, batch_data in tenumerate(data_loader):
-        # if i <19:
+        # if i < 80:
         #     continue # TODO: debug use
+        # print(f"Processing {i}th sample")
 
         if batch_data is None:
             continue
@@ -171,6 +173,12 @@ def main():
             elif opt.fusion_method == 'intermediate':
                 pred_box_tensor, pred_score, gt_box_tensor = \
                     inference_utils.inference_intermediate_fusion(batch_data,
+                                                                model,
+                                                                opencood_dataset)
+            # two stage, use box to generate flow prior, conv, then warp feature
+            elif opt.fusion_method == 'intermediate_flow_module': 
+                pred_box_tensor, pred_score, gt_box_tensor = \
+                    inference_utils.inference_intermediate_fusion_flow_module(batch_data,
                                                                 model,
                                                                 opencood_dataset)
 

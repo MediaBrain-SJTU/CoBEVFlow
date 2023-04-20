@@ -652,7 +652,7 @@ class raindrop_fuse(nn.Module):
             
         pairwise_t_matrix : torch.Tensor
             The transformation matrix from each cav to ego, 
-            shape: (B, L, L, 4, 4) 
+            shape: (B, L, K, 2, 3) 
 
         time_diffs : torch.Tensor
             time interval, (sum(n_cav), )

@@ -23,6 +23,10 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_co
 from opencood.data_utils.datasets.late_fusion_dataset_opv2v_regular import LateFusionDatasetRegular
 from opencood.data_utils.datasets.late_fusion_dataset_opv2v_irregular import LateFusionDatasetIrregular
 from opencood.data_utils.datasets.late_fusion_dataset_opv2v_irregular_4flow import LateFusionDatasetIrregular4Flow
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow import IntermediateFusionDatasetIrregularFlow
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_compensation import IntermediateFusionDatasetIrregularFlowCompensation
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_singleframe import IntermediateFusionDatasetIrregularSingleframe
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_new import IntermediateFusionDatasetIrregularFlowNew
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -44,7 +48,11 @@ __all__ = {
     'IntermediateFusionDatasetIrregularCompensation': IntermediateFusionDatasetIrregularCompensation,
     'LateFusionDatasetRegular': LateFusionDatasetRegular,
     'LateFusionDatasetIrregular': LateFusionDatasetIrregular, 
-    'LateFusionDatasetIrregular4Flow': LateFusionDatasetIrregular4Flow
+    'LateFusionDatasetIrregular4Flow': LateFusionDatasetIrregular4Flow,
+    'IntermediateFusionDatasetIrregularFlow': IntermediateFusionDatasetIrregularFlow, 
+    'IntermediateFusionDatasetIrregularFlowCompensation': IntermediateFusionDatasetIrregularFlowCompensation,
+    'IntermediateFusionDatasetIrregularSingleframe': IntermediateFusionDatasetIrregularSingleframe,
+    'IntermediateFusionDatasetIrregularFlowNew': IntermediateFusionDatasetIrregularFlowNew
 }
 
 # the final range for evaluation

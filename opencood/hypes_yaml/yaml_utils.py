@@ -11,7 +11,7 @@ import math
 import numpy as np
 
 
-def load_yaml(file, opt=None):
+def load_yaml(file, opt=None, config_suffix=''):
     """
     Load yaml file and return a dictionary.
 
@@ -28,7 +28,10 @@ def load_yaml(file, opt=None):
         A dictionary that contains defined parameters.
     """
     if opt and opt.model_dir:
-        file = os.path.join(opt.model_dir, 'config.yaml')
+        if config_suffix:
+            file = os.path.join(opt.model_dir, f'config_{config_suffix}.yaml')
+        else:
+            file = os.path.join(opt.model_dir, 'config.yaml')
 
     stream = open(file, 'r')
     loader = yaml.Loader

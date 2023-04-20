@@ -225,7 +225,7 @@ def load_two_parts_model(saved_path, model):
     return eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")), model
 
 
-def setup_train(hypes):
+def setup_train(hypes, log_path="/DB/data/sizhewei"):
     """
     Create folder for saved model based on current timestep and model name
 
@@ -263,7 +263,7 @@ def setup_train(hypes):
     curr_time = current_time.strftime("_%Y_%m_%d_%H_%M_%S")
     folder_name = folder_name + curr_time
     # current_path = os.path.dirname(__file__)
-    current_path = Path("/DB/data/sizhewei")
+    current_path = Path(log_path)
     current_path = os.path.join(current_path, 'logs/')
 
     full_path = os.path.join(current_path, folder_name)

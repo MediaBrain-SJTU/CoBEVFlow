@@ -67,8 +67,8 @@ def inference_late_fusion_flow(batch_data, model, dataset, batch_id = 0):
         output_dict[cav_id] = model(cav_content)
 
     box_results = dataset.generate_pred_bbx_frames(batch_data, output_dict)
-    if batch_id%10 == 0:
-        viz_compensation_latefusion_flow(dataset, batch_data, box_results, file_name=folder_name, save_notes='no_comp', vis_comp_box=False, batch_id=batch_id)
+    # if batch_id%10 == 0:
+    #     viz_compensation_latefusion_flow(dataset, batch_data, box_results, file_name=folder_name, save_notes='no_comp', vis_comp_box=False, batch_id=batch_id)
 
     ''' 
     box_result : dict for each cav at each time
@@ -98,8 +98,8 @@ def inference_late_fusion_flow(batch_data, model, dataset, batch_id = 0):
     '''
 
     # 可视化每一帧的 box frame 与 final GT 进行对比
-    if batch_id%10 == 0:
-        viz_compensation_latefusion_flow(dataset, batch_data, updated_box, file_name=folder_name, save_notes='w_comp', vis_comp_box=True, batch_id=batch_id)
+    # if batch_id%10 == 0:
+    #     viz_compensation_latefusion_flow(dataset, batch_data, updated_box, file_name=folder_name, save_notes='w_comp', vis_comp_box=True, batch_id=batch_id)
 
     # return batch_id, batch_id, batch_id
 
@@ -125,9 +125,37 @@ def box_flow_update(box_results, batch_id=0):
     """
     from opencood.tools.matcher import Matcher
     matcher = Matcher(1, 1)
-    updated_box = matcher(box_results, batch_id)
+    updated_box = matcher(box_results, batch_id=batch_id)
 
     return updated_box
+
+def inference_intermediate_fusion_flow_module(batch_data, model, dataset):
+    """
+    Model inference for flow module
+    利用box预测结果生成flow 根据该flow更新feature
+
+    Parameters
+    ----------
+    batch_data : dict
+    model : opencood.object
+    dataset : opencood.EarlyFusionDataset
+
+    Returns
+    -------
+    pred_box_tensor : torch.Tensor
+        The tensor of prediction bounding box after NMS.
+    gt_box_tensor : torch.Tensor
+        The tensor of gt bounding box.
+    """
+    output_dict = OrderedDict()
+    cav_content = batch_data['ego']
+    output_dict['ego'] = model(cav_content, dataset)
+    
+    pred_box_tensor, pred_score, gt_box_tensor = \
+        dataset.post_process(batch_data,
+                             output_dict)
+
+    return pred_box_tensor, pred_score, gt_box_tensor
 
 def inference_intermediate_fusion_flow(batch_data, model, dataset):
     """

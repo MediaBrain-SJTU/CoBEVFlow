@@ -100,6 +100,7 @@ class PointPillarMaxfusionFlow(nn.Module):
         rm = self.reg_head(spatial_features_2d)
 
         output_dict.update({
+            'spatial_features': batch_dict['spatial_features'],
             'psm': psm,
             'rm': rm
         })
@@ -116,7 +117,7 @@ class PointPillarMaxfusionFlow(nn.Module):
         -----------
         updated_dict : 
             'ego' / cav_id : {
-                'updated_spatial_feature_2d' : torch.tensor, [C, H, W]
+                'updated_spatial_features_2d' : torch.tensor, [C, H, W]
             }
 
         pairwise_t_matrix: 
@@ -127,24 +128,39 @@ class PointPillarMaxfusionFlow(nn.Module):
 
         """
         device = updated_dict['ego']['spatial_features_2d'].device
-        spatial_feature_2d_list = []
+        spatial_features_2d_list = []
+        spatial_features_list = []
         for cav_id, cav_content in updated_dict.items():
-            spatial_feature_2d_list.append(cav_content['updated_spatial_feature_2d'])
+            spatial_features_2d_list.append(cav_content['updated_spatial_features_2d'])
+            spatial_features_list.append(cav_content['updated_spatial_features'])
 
-        record_len = torch.tensor([len(spatial_feature_2d_list)]).to(device)
-        spatial_feature_2d = torch.stack(spatial_feature_2d_list, dim=0).to(device)  # (sum(cav), C, H, W)
+        record_len = torch.tensor([len(spatial_features_2d_list)]).to(device)
+        spatial_features_2d = torch.stack(spatial_features_2d_list, dim=0).to(device)  # (sum(cav), C, H, W)
+        spatial_features = torch.stack(spatial_features_list, dim=0).to(device)  # (sum(cav), C', H', W')
 
         pairwise_t_matrix = pairwise_t_matrix.unsqueeze(0)
+        psm_single = self.cls_head(spatial_features_2d)
         # spatial_features_2d is [sum(cav_num), 256, 50, 176]
         # output only contains ego
         # [B, 256, 50, 176]
-        fused_feature = self.fusion_net(spatial_feature_2d,
-                                        record_len,
-                                        pairwise_t_matrix)
-
-        # fused_feature = self.rain_fusion(spatial_feature_2d,
+        # fused_feature = self.fusion_net(spatial_features_2d,
         #                                 record_len,
         #                                 pairwise_t_matrix)
+
+        '''
+        change pariwise_t_matrix from (B, L, L, 4, 4) to (B, L, K, 4, 4)
+        '''
+        new_pairwise_t_matrix = pairwise_t_matrix[:, 0, :, :, :].unsqueeze(2) # (B, L, 1, 4, 4)
+        record_frames = torch.ones((len(spatial_features_2d_list))).to(device)
+        fused_feature, communication_rates, result_dict = self.rain_fusion(spatial_features,
+                    psm_single,
+                    record_len,
+                    new_pairwise_t_matrix, 
+                    record_frames,
+                    self.backbone,
+                    [self.shrink_conv, self.cls_head, self.reg_head])
+        if self.shrink_flag:
+                fused_feature = self.shrink_conv(fused_feature)
 
         # ###### debug use, viz updated feature of each cav
         # from matplotlib import pyplot as plt

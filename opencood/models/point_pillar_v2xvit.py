@@ -143,7 +143,11 @@ class PointPillarV2XVit(nn.Module):
         for b in range(B):
             # (B,L,L,2,3)
             ego = 0
-            regroup_feature_new.append(warp_affine_simple(regroup_feature[b], pairwise_t_matrix[b, ego], (H_, W_)))
+            # Original OPV2V
+            # regroup_feature_new.append(warp_affine_simple(regroup_feature[b], pairwise_t_matrix[b, ego], (H_, W_)))
+
+            # OPV2V Irregular version
+            regroup_feature_new.append(warp_affine_simple(regroup_feature[b], pairwise_t_matrix[b, :, 0], (H_, W_)))
         regroup_feature = torch.stack(regroup_feature_new)
         ###################################
 

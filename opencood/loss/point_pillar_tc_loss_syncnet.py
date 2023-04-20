@@ -72,17 +72,16 @@ class WeightedSmoothL1Loss(nn.Module):
         return loss
 
 
-class PointPillarTcLoss(nn.Module):
+class PointPillarTcLossSyncnet(nn.Module):
     def __init__(self, args):
-        super(PointPillarTcLoss, self).__init__()
+        super(PointPillarTcLossSyncnet, self).__init__()
         self.loss_dict = {}
 
         self.backbone_fix = False
         self.use_dir = False
         if 'backbone_fix' in args.keys() and args['backbone_fix']:
             self.backbone_fix = True
-            self.flow_loss = nn.SmoothL1Loss(reduction='none')
-            self.state_loss = nn.BCEWithLogitsLoss()
+            
         else:
             self.reg_loss_func = WeightedSmoothL1Loss()
             self.alpha = 0.25
@@ -146,24 +145,6 @@ class PointPillarTcLoss(nn.Module):
         """
         if self.backbone_fix:
             total_loss = 0
-            ###### flow loss ######
-            if f'flow_preds{suffix}' in output_dict and output_dict[f'flow_preds{suffix}'].shape[0] != 0:
-                h, w = output_dict[f'flow_preds{suffix}'].shape[-2], output_dict[f'flow_preds{suffix}'].shape[-1]
-                output_dict[f'flow_preds{suffix}'] = output_dict[f'flow_preds{suffix}'].reshape(1, -1, h, w)
-                target_dict[f'flow_gt{suffix}'] = target_dict[f'flow_gt{suffix}'].reshape(1, -1, h, w)
-                flow_loss = self.flow_loss(output_dict[f'flow_preds{suffix}'],
-                                        target_dict[f'flow_gt{suffix}'])
-                valid_flow_mask = ((target_dict[f'flow_gt{suffix}'].reshape(-1, 2, h, w).max(dim=1)[0] != 0) * 1.0).unsqueeze(1)
-                flow_loss = (flow_loss * valid_flow_mask).sum() / (valid_flow_mask.sum() + 1e-6)
-                # flow_loss *= self.flow_weight
-
-                state_loss = self.state_loss(output_dict[f'state_preds{suffix}'],
-                                            valid_flow_mask)
-
-                total_loss = flow_loss + state_loss
-                self.loss_dict.update({'total_loss': total_loss.item(),
-                                    'flow_loss': flow_loss.item(),
-                                    'state_loss': state_loss.item()})
         else:
             if mode=='curr':
                 rm = output_dict['rm_curr']
@@ -250,6 +231,10 @@ class PointPillarTcLoss(nn.Module):
             if self.use_dir:
                 total_loss += dir_loss
                 self.loss_dict.update({'dir_loss': dir_loss})
+
+        ###### flow loss ######
+        total_loss += output_dict['recon_loss']
+        self.loss_dict.update({'total_loss': total_loss.item()})
 
         return total_loss
 

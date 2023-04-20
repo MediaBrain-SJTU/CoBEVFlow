@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 
 class SyncLSTM(nn.Module):
-    def __init__(self, channel_size = 256, h = 32, w = 32, k = 3, TM_Flag = True, compressed_size = 64):
+    def __init__(self, channel_size = 256, h = 32, w = 32, k = 3, TM_Flag = True, compressed_size = 32):
         super(SyncLSTM, self).__init__()
         self.k = k
 
@@ -28,7 +28,7 @@ class SyncLSTM(nn.Module):
     def forward(self, x_raw, delta_t):
         batch, seq, channel, h, w = x_raw.shape
         if self.compressed_size != self.channel_size:
-            x = F.relu(self.bn_pre_1(self.conv_pre_1(x_raw.view(-1,channel,h,w))))
+            x = F.relu(self.bn_pre_1(self.conv_pre_1(x_raw.reshape(-1,channel,h,w))))
             x = F.relu(self.bn_pre_2(self.conv_pre_2(x)))
             x = x.view(batch, seq, self.compressed_size, h, w)
         else:

@@ -168,14 +168,14 @@ if __name__ == "__main__":
     # to_npy_and_json(split_name='validate')
     # create_small_dataset(split_name='train')
 
-    root_dirs = "/DB/data/sizhewei/logs"
+    root_dirs = "/DB/data/sizhewei/logs/where2comm_max_multiscale_resnet_32ch"
     note = 'ir_thre_0_d_20'
     flow_note = 'flow_thre_20_d_300_wo_norm'
     save_path = f"./opencood/result_{note}.jpg"
     title = "Iregular data, random sample intervals."
     
-    split_list = ['where2comm_irregular_d_0_300ms', 'latefusion_irregular_d_0_300ms', 'latefusion_flow'] # , 'latefusion_irregular'
-    single_split_name = 'single_irregular'
+    split_list = ['where2comm', 'featureFlow', 'late', 'lateFlow_new'] # , 'latefusion_irregular'
+    single_split_name = 'single'
 
     num_delay = 15
 
@@ -186,21 +186,22 @@ if __name__ == "__main__":
     fig.text(0.5, 0.06, '# Avg. time delay (ms)', ha='center', fontsize='x-large')
     fig.text(0.06, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
     ax30 = ax[0]; ax50 = ax[1]; ax70 = ax[2]
-    colors = ['lightskyblue', 'lightseagreen', 'tomato']
+    colors = ['lightskyblue', 'lightseagreen', 'tomato', 'orange']
     for split_i, split_name in enumerate(split_list):
         ap_list = []
         delays = []
         method_name = split_name.split('_')[0]
-        if split_name == 'latefusion_flow':
+        if split_name == 'lateFlow_new':
             method_name = 'late+flow'
+        elif split_name == 'featureFlow':
+            method_name = 'feature+flow'
         latest_time_delay = -100.00
-        for i in tqdm(np.linspace(0, 0.3, 16)):
-            log_file = os.path.join(split_name, f"eval_no_noise_{note}_%.2f.yaml" % i)
-            if split_name == 'latefusion_flow':
-                log_file = os.path.join(split_name, f"eval_no_noise_{flow_note}_%.2f.yaml" % i)
-            eval_file = os.path.join(root_dirs, log_file)
+        for i in tqdm(np.linspace(0, 0.3, 4)):
+            # log_file = os.path.join(split_name, f"eval_{note}_%.1f.yaml" % i)
+            eval_file = os.path.join(root_dirs, f"eval_{split_name}_%.1f.yaml" % i)
             
             if not os.path.exists(eval_file):
+                print(f'eval file {eval_file} not exist!')
                 continue
             with open(eval_file, "r", encoding="utf-8") as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
@@ -210,8 +211,9 @@ if __name__ == "__main__":
             except:
                 unit_time_delay = i
             
-            if (unit_time_delay - latest_time_delay) < 20:
-                continue
+            # if (unit_time_delay - latest_time_delay) < 20:
+            #     continue
+
             latest_time_delay = unit_time_delay
             
             tmp_aps = []
@@ -236,7 +238,7 @@ if __name__ == "__main__":
     
     # for single fusion
     method_name = single_split_name.split('_')[0]
-    eval_file = os.path.join(root_dirs, single_split_name, f'eval_no_noise_{note}.yaml')
+    eval_file = os.path.join(root_dirs, f'eval_{single_split_name}.yaml')
     with open(eval_file, "r", encoding="utf-8") as f:
         data = yaml.load(f, Loader=yaml.FullLoader)
     plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], color='peru', linestyle='--', label=method_name + '_' + 'ap30')
