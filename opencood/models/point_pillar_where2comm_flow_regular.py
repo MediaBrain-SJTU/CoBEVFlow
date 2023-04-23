@@ -155,6 +155,7 @@ class PointPillarWhere2commFlowRegular(nn.Module):
         record_len = data_dict['record_len']
         record_frames = data_dict['past_k_time_interval']                       #(B, )
         pairwise_t_matrix = data_dict['pairwise_t_matrix']                      #(B, L, k, 4, 4)
+        pastk_2_past0_tr_mats = data_dict['pastk_2_past0_tr_mats']              #(sum(N_b), k, 4, 4)
         
         # debug = 0
         B, _, k, _, _ = pairwise_t_matrix.shape
@@ -186,6 +187,7 @@ class PointPillarWhere2commFlowRegular(nn.Module):
 
         # debug use
         flow_gt = data_dict['label_dict']['flow_gt']
+        warp_mask = data_dict['label_dict']['warp_mask']
 
         # rain attention:
         if self.multi_scale:
@@ -196,7 +198,9 @@ class PointPillarWhere2commFlowRegular(nn.Module):
                 record_frames,
                 self.backbone,
                 [self.shrink_conv, self.cls_head, self.reg_head],
-                flow_gt=flow_gt)
+                pastk_2_past0_tr_mats=pastk_2_past0_tr_mats,
+                flow_gt=flow_gt, 
+                warp_mask=warp_mask)
             # downsample feature to reduce memory
             if self.shrink_flag:
                 fused_feature = self.shrink_conv(fused_feature)

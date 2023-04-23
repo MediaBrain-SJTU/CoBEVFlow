@@ -22,7 +22,6 @@ from opencood.models.sub_modules.naive_compress import NaiveCompressor
 # from opencood.models.sub_modules.dcn_net import DCNNet
 # from opencood.models.fuse_modules.where2comm import Where2comm
 from opencood.models.fuse_modules.where2comm_attn import Where2comm
-# from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
 from opencood.models.fuse_modules.raindrop_swin import raindrop_swin
 from opencood.models.fuse_modules.raindrop_swin_w_single import raindrop_swin_w_single
 from opencood.models.fuse_modules.raindrop_flow import raindrop_fuse
@@ -73,6 +72,7 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
+        self.design_mode = 0
         if 'design_mode' in args.keys():
             self.design_mode = args['design_mode']
             print(f'=== design mode : {self.design_mode} ===')
@@ -157,6 +157,9 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         anchor_box = data_dict['anchor_box'] # (H, W, 2, 7)
         psm_single_list = pred_dict['psm_single_list']
         rm_single_list = pred_dict['rm_single_list']
+
+        # H, W = psm_single_list[0].shape[-2:]
+        shape_list = torch.tensor([64, 200, 704]).to(device)
         
         trans_mat_pastk_2_past0_batch = []
         B = len(lidar_pose_batch)
@@ -199,7 +202,7 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
             cav_trans_mat_pastk_2_past0.append(pastk_trans_mat_pastk_2_past0)
             
             # 2. generate box flow in one batch
-            box_flow_map, mask = self.matcher(box_results, fusion='flow', shape_list=torch.tensor([64, 200, 704]).to(device))
+            box_flow_map, mask = self.matcher(box_results, fusion='flow', shape_list=shape_list)
             box_flow_map_list.append(box_flow_map)
             reserved_mask_list.append(mask)
         
@@ -265,19 +268,33 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         'rm_single_list': self.regroup(rm_single, record_len, k)})
         box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, psm_single.device)
 
-        flow_gt = data_dict['label_dict']['flow_gt']
+        if 'flow_gt' in data_dict['label_dict']:
+            flow_gt = data_dict['label_dict']['flow_gt']
+        else:
+            flow_gt = None
 
         # rain attention:
         if self.multi_scale:
-            fused_feature, communication_rates, result_dict, flow_recon_loss = self.rain_fusion(batch_dict['spatial_features'],
-                psm_single,
-                record_len,
-                pairwise_t_matrix, 
-                record_frames,
-                self.backbone,
-                [self.shrink_conv, self.cls_head, self.reg_head],
-                box_flow=box_flow_map, reserved_mask=reserved_mask,
-                flow_gt=flow_gt)
+            if self.design_mode == 0:
+                fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                    psm_single,
+                    record_len,
+                    pairwise_t_matrix, 
+                    record_frames,
+                    self.backbone,
+                    [self.shrink_conv, self.cls_head, self.reg_head],
+                    box_flow=box_flow_map, reserved_mask=reserved_mask,
+                    flow_gt=flow_gt)
+            else: 
+                fused_feature, communication_rates, result_dict, flow_recon_loss = self.rain_fusion(batch_dict['spatial_features'],
+                    psm_single,
+                    record_len,
+                    pairwise_t_matrix, 
+                    record_frames,
+                    self.backbone,
+                    [self.shrink_conv, self.cls_head, self.reg_head],
+                    box_flow=box_flow_map, reserved_mask=reserved_mask,
+                    flow_gt=flow_gt)
             # downsample feature to reduce memory
             if self.shrink_flag:
                 fused_feature = self.shrink_conv(fused_feature)
@@ -346,7 +363,8 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                        'comm_rate': communication_rates
                        })
 
-        output_dict.update({'flow_recon_loss': flow_recon_loss})
+        if self.design_mode == 1:
+            output_dict.update({'flow_recon_loss': flow_recon_loss})
         
         output_dict.update(result_dict) 
         

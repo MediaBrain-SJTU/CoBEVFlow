@@ -153,7 +153,7 @@ class PointPillarTcLoss(nn.Module):
                 target_dict[f'flow_gt{suffix}'] = target_dict[f'flow_gt{suffix}'].reshape(1, -1, h, w)
                 flow_loss = self.flow_loss(output_dict[f'flow_preds{suffix}'],
                                         target_dict[f'flow_gt{suffix}'])
-                valid_flow_mask = ((target_dict[f'flow_gt{suffix}'].reshape(-1, 2, h, w).max(dim=1)[0] != 0) * 1.0).unsqueeze(1)
+                valid_flow_mask = ((torch.abs(target_dict[f'flow_gt{suffix}'].reshape(-1, 2, h, w)).max(dim=1)[0] > 0.49) * 1.0).unsqueeze(1)
                 flow_loss = (flow_loss * valid_flow_mask).sum() / (valid_flow_mask.sum() + 1e-6)
                 # flow_loss *= self.flow_weight
 
@@ -356,6 +356,10 @@ class PointPillarTcLoss(nn.Module):
             writer.add_scalar('Regression_loss'+suffix, reg_loss,
                             epoch*batch_len + batch_id)
             writer.add_scalar('Confidence_loss'+suffix, conf_loss,
+                            epoch*batch_len + batch_id)
+            writer.add_scalar('Flow_recon_loss'+suffix, flow_loss,
+                            epoch*batch_len + batch_id)
+            writer.add_scalar('State_loss'+suffix, state_loss,
                             epoch*batch_len + batch_id)
                             
             if self.use_dir:

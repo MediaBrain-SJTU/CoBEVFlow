@@ -135,11 +135,16 @@ def find_id_difference(obj_A, obj_B, id_A, id_B):
     B_common = obj_B[index_B, :]
 
     # 计算差值
-    diff = B_common[:, :3] - A_common[:, :3]
+    try:
+        diff = B_common[:, :2] - A_common[:, :2]
+    except IndexError:
+        B_common = np.expand_dims(B_common, axis=0)
+        A_common = np.expand_dims(A_common, axis=0)
+        diff = B_common[:, :2] - A_common[:, :2]
 
     return diff, A_common
 
-def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxel_size, past_k=1):
+def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxel_size, shape_list = torch.tensor([64, 192, 704]), past_k=1):
     '''
     SizheWei@2023/04/20 
     Generate GT flow map for a single agent.
@@ -151,6 +156,8 @@ def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxe
     Output:
         bev_flow: np.array [2,H,W]
     '''
+    C, H, W = shape_list
+
     past0_box = object_stack[0]
     curr_box = object_stack[1]
     past0_id = object_id_stack[0]
@@ -159,12 +166,24 @@ def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxe
 
     selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
 
-    shape_list = torch.tensor([64, 200, 704])
     flow = torch.from_numpy(flow).to(torch.float32)
     selected_box_3dcorner_past0 = torch.from_numpy(selected_box_3dcorner_past0).to(torch.float32)
     flow_map, mask = generate_flow_map_and_mask(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
-    
-    return flow_map.squeeze(0).permute(2, 0, 1).numpy()
+    flow_map = flow_map.squeeze(0).permute(2, 0, 1) #(2, H, W)
+
+    #######################
+    denorm_flow = flow_map.clone()
+    denorm_flow[0, :, :] = (denorm_flow[0, :, :] + 1.0) * (W / 2.0)
+    denorm_flow[1, :, :] = (denorm_flow[1, :, :] + 1.0) * (H / 2.0)
+    x_coord = torch.arange(W).float()   # [0, ..., W]
+    y_coord = torch.arange(H).float()   # [0, ..., H]
+    y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W]
+    grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0) # [2, H, W]
+    final_flow = denorm_flow - grid
+    final_flow = final_flow.numpy()
+    #######################
+
+    return final_flow, mask.squeeze(0)
 
 def generate_flow_map(object_stack, object_id_stack, cav_lidar_range, voxel_size, past_k=1):
     '''

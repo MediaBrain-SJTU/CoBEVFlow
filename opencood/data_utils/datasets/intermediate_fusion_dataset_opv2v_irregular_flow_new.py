@@ -32,7 +32,7 @@ from opencood.utils.transformation_utils import tfm_to_pose, x1_to_x2, x_to_worl
 from opencood.utils.pose_utils import add_noise_data_dict, remove_z_axis
 from opencood.utils.common_utils import read_json
 from opencood.utils import box_utils
-from opencood.utils.flow_utils import generate_flow_map
+from opencood.utils.flow_utils import generate_flow_map, generate_flow_map_szwei
 
 from opencood.utils.box_utils import boxes_to_corners2d # for debug use
 # from opencood.models.sub_modules.box_align_v2 import box_alignment_relative_sample_np
@@ -92,6 +92,11 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         self.is_ab_regular = False
         if 'is_ab_regular' in params and params['is_ab_regular']:
             self.is_ab_regular = True # TODO: 这里先注释掉，因为这个参数在 yaml 中没有定义
+
+        # 控制是否需要生成GT flow
+        self.is_generate_gt_flow = False
+        if 'is_generate_gt_flow' in params and params['is_generate_gt_flow']:
+            self.is_generate_gt_flow = True
         
         self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
 
@@ -643,10 +648,13 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         past_k_pose_stack = []
         past_k_features_stack = [] 
         past_k_tr_mats = []
+        pastk_2_past0_tr_mats = []
         past_k_label_dicts_stack = []
         past_k_sample_interval_stack = []
         past_k_time_diffs_stack = []
-        flow_gt = []
+        if self.is_generate_gt_flow:
+            flow_gt = []
+            warp_mask = []
         # avg_past_k_time_diffs = 0.0
         # avg_past_k_sample_interval = 0.0
         illegal_cav = []
@@ -740,12 +748,18 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             past_k_sample_interval_stack += selected_cav_processed['past_k_sample_interval']
             # past k frames to ego pose trans matrix, list of len=N, past_k_tr_mats[i]: ndarray(k, 4, 4)
             past_k_tr_mats.append(selected_cav_processed['past_k_tr_mats'])
+            # past k frames to cav past 0 frame trans matrix, list of len=N, pastk_2_past0_tr_mats[i]: ndarray(k, 4, 4)
+            pastk_2_past0_tr_mats.append(selected_cav_processed['pastk_2_past0_tr_mats'])
             # past k label dict: N, k, object_num, 7
             # past_k_label_dicts_stack.append(selected_cav_processed['past_k_label_dicts'])
         
-            # for flow
-            flow_gt.append(selected_cav_processed['flow_gt'])
+            if self.is_generate_gt_flow:
+                # for flow
+                flow_gt.append(selected_cav_processed['flow_gt'])
+                warp_mask.append(selected_cav_processed['warp_mask'])
         
+        pastk_2_past0_tr_mats = np.stack(pastk_2_past0_tr_mats, axis=0) # N, k, 4, 4
+
         # {pos: array[num_cav, k, 100, 252, 2], neg: array[num_cav, k, 100, 252, 2], target: array[num_cav, k, 100, 252, 2]}
         # past_k_label_dicts = self.post_processor.merge_label_to_dict(past_k_label_dicts_stack)
         # self.times.append(time.time())
@@ -824,11 +838,15 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
              'curr_lidar_poses': curr_lidar_poses,
              'past_k_lidar_poses': past_k_lidar_poses,
              'past_k_time_diffs': past_k_time_diffs_stack,
-             'past_k_sample_interval': past_k_sample_interval_stack})
+             'past_k_sample_interval': past_k_sample_interval_stack, 
+             'pastk_2_past0_tr_mats': pastk_2_past0_tr_mats})
             #  'times': self.times})
 
-        flow_gt = np.vstack(flow_gt) # (N, 2, H, W)
-        processed_data_dict['ego'].update({'flow_gt': flow_gt})
+        if self.is_generate_gt_flow:
+            flow_gt = np.vstack(flow_gt) # (N, 2, H, W)
+            processed_data_dict['ego'].update({'flow_gt': flow_gt})
+            warp_mask = np.vstack(warp_mask) # (N, C, H, W)
+            processed_data_dict['ego'].update({'warp_mask': warp_mask})
         
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
@@ -903,6 +921,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                 'past_k_features': 		    # list of past k frames' lidar
                 'past_k_time_diffs': 	    # list of past k frames' time diff with current frame
                 'past_k_tr_mats': 		    # list of past k frames' transformation matrix to current ego coordinate
+                'pastk_2_past0_tr_mats':    # list of past k frames' transformation matrix to past 0 frame
                 'past_k_sample_interval':   # list of past k frames' sample interval with later frame
                 'avg_past_k_time_diffs':    # avg_past_k_time_diffs,
                 'avg_past_k_sample_interval': # avg_past_k_sample_interval,
@@ -929,6 +948,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         
         # past k transfomation matrix
         past_k_tr_mats = []
+        # past_k to past_0 tansfomation matrix
+        pastk_2_past0_tr_mats = []
         # past k lidars
         past_k_features = []
         # past k poses
@@ -954,7 +975,11 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             transformation_matrix = \
                 x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray
             past_k_tr_mats.append(transformation_matrix)
-
+            # past_k trans past_0 matrix
+            pastk_2_past0 = \
+                x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], selected_cav_base['past_k'][0]['params']['lidar_pose'])
+            pastk_2_past0_tr_mats.append(pastk_2_past0)
+            
             # 2. lidar feature
             lidar_np = selected_cav_base['past_k'][i]['lidar_np']
             lidar_np = shuffle_points(lidar_np)
@@ -1000,6 +1025,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         '''
 
         past_k_tr_mats = np.stack(past_k_tr_mats, axis=0) # (k, 4, 4)
+        pastk_2_past0_tr_mats = np.stack(pastk_2_past0_tr_mats, axis=0) # (k, 4, 4)
 
         # avg_past_k_time_diffs = float(sum(past_k_time_diffs) / len(past_k_time_diffs))
         # avg_past_k_sample_interval = float(sum(past_k_sample_interval) / len(past_k_sample_interval))
@@ -1026,6 +1052,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
              'object_ids': object_ids,
              'curr_pose': selected_cav_base['curr']['params']['lidar_pose'],
              'past_k_tr_mats': past_k_tr_mats,
+             'pastk_2_past0_tr_mats': pastk_2_past0_tr_mats,
              'past_k_poses': past_k_poses,
              'past_k_features': past_k_features,
              'past_k_time_diffs': past_k_time_diffs,
@@ -1036,56 +1063,34 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
              'if_no_point': if_no_point
              })
 
-        # generate flow, from past_0 and curr
-        prev_object_id_stack = {}
-        prev_object_stack = {}
-        for t_i in range(2):
-            split_part = selected_cav_base['past_k'][0] if t_i == 0 else selected_cav_base['curr'] # TODO: 这里面的 prev 和 curr 可能反了
-            object_bbx_center, object_bbx_mask, object_ids = \
-                self.generate_object_center([split_part], selected_cav_base['past_k'][0]['params']['lidar_pose'])
-            prev_object_id_stack[t_i] = object_ids
-            prev_object_stack[t_i] = object_bbx_center
-        
-        for t_i in range(2):
-            unique_object_ids = list(set(prev_object_id_stack[t_i]))
-            unique_indices = \
-                [prev_object_id_stack[t_i].index(x) for x in unique_object_ids]
-            prev_object_stack[t_i] = np.vstack(prev_object_stack[t_i])
-            prev_object_stack[t_i] = prev_object_stack[t_i][unique_indices]
-            prev_object_id_stack[t_i] = unique_object_ids
+        if self.is_generate_gt_flow:
+            # generate flow, from past_0 and curr
+            prev_object_id_stack = {}
+            prev_object_stack = {}
+            for t_i in range(2):
+                split_part = selected_cav_base['past_k'][0] if t_i == 0 else selected_cav_base['curr'] # TODO: 这里面的 prev 和 curr 可能反了
+                object_bbx_center, object_bbx_mask, object_ids = \
+                    self.generate_object_center([split_part], selected_cav_base['past_k'][0]['params']['lidar_pose'])
+                prev_object_id_stack[t_i] = object_ids
+                prev_object_stack[t_i] = object_bbx_center
+            
+            for t_i in range(2):
+                unique_object_ids = list(set(prev_object_id_stack[t_i]))
+                unique_indices = \
+                    [prev_object_id_stack[t_i].index(x) for x in unique_object_ids]
+                prev_object_stack[t_i] = np.vstack(prev_object_stack[t_i])
+                prev_object_stack[t_i] = prev_object_stack[t_i][unique_indices]
+                prev_object_id_stack[t_i] = unique_object_ids
+            
+            # TODO: generate_flow_map: yhu, generate_flow_map_szwei: szwei
+            flow_map, warp_mask = generate_flow_map_szwei(prev_object_stack,
+                                            prev_object_id_stack,
+                                            self.params['preprocess']['cav_lidar_range'],
+                                            self.params['preprocess']['args']['voxel_size'],
+                                            past_k=1)
 
-        # TODO: for debug use
-        # previous_cood = prev_object_stack[0][0]
-        # # test_prev_box_2d = boxes_to_corners2d(np.expand_dims(previous_cood, axis=0), order='hwl')
-        # # print('test_prev_box_2d', test_prev_box_2d)
-        # #   [[[52.839737   5.977605  -1.9081762] 
-        # #   [52.84148    7.9091973 -1.9081762]
-        # #   [48.236977   7.913352  -1.9081762]
-        # #   [48.235233   5.9817595 -1.9081762]]]
-        # current_cood = previous_cood.copy()
-        # current_cood[0] += 100
-        # current_cood[1] += 30
-        # object_id = prev_object_id_stack[0][0]
-        # prev_object_id_stack = {}
-        # prev_object_stack = {}
-        # for i in range(2):
-        #     prev_object_id_stack[i] = [object_id]
-        #     prev_object_stack[i] = [previous_cood] if i == 0 else [current_cood]
-        ########################################
-        
-        flow_map = generate_flow_map(prev_object_stack,
-                                        prev_object_id_stack,
-                                        self.params['preprocess']['cav_lidar_range'],
-                                        self.params['preprocess']['args']['voxel_size'],
-                                        past_k=1)
-
-        # # TODO: debug use
-        # debug_path = '/remote-home/share/sizhewei/logs/where2comm_flow_debug/viz_flow/'
-        # torch.save(flow_map, debug_path + 'flow_map_true.pt')
-        # torch.save(prev_object_stack, debug_path + 'bbx_0.pt')
-        # ########################################
-
-        selected_cav_processed.update({'flow_gt': flow_map})
+            selected_cav_processed.update({'flow_gt': flow_map})
+            selected_cav_processed.update({'warp_mask': warp_mask})
 
         return selected_cav_processed
 
@@ -1243,10 +1248,14 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         past_k_sample_interval = []
         past_k_avg_time_delay = []
         past_k_avg_sample_interval = []
+        pastk_2_past0_tr_mats = []
         # pairwise transformation matrix
         pairwise_t_matrix_list = []
-        # flow gt
-        flow_gt_list = []
+        
+        if self.is_generate_gt_flow:
+            # flow gt
+            flow_gt_list = []
+            warp_mask_list = []
 
         # for debug use:
         sum_time_diff = 0.0
@@ -1280,9 +1289,12 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             record_len.append(ego_dict['cav_num'])
             label_dict_list.append(ego_dict['label_dict'])
             pairwise_t_matrix_list.append(ego_dict['pairwise_t_matrix'])
+            pastk_2_past0_tr_mats.append(ego_dict['pastk_2_past0_tr_mats'])
             # past_k_label_list.append(ego_dict['past_k_label_dicts'])
 
-            flow_gt_list.append(ego_dict['flow_gt'])
+            if self.is_generate_gt_flow:
+                flow_gt_list.append(ego_dict['flow_gt'])
+                warp_mask_list.append(ego_dict['warp_mask'])
 
             # time_consume += ego_dict['times']
             if self.visualize:
@@ -1338,13 +1350,18 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         # (B, max_cav, k, 4, 4)
         pairwise_t_matrix = torch.from_numpy(np.array(pairwise_t_matrix_list))
 
+        pastk_2_past0_tr_mats = torch.from_numpy(np.vstack(pastk_2_past0_tr_mats))
+
         # add pairwise_t_matrix to label dict
         label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
         label_torch_dict['record_len'] = record_len
 
-        # for flow
-        flow_gt = torch.from_numpy(np.vstack(flow_gt_list))
-        label_torch_dict.update({'flow_gt': flow_gt})
+        if self.is_generate_gt_flow:
+            # for flow
+            flow_gt = torch.from_numpy(np.vstack(flow_gt_list))
+            label_torch_dict.update({'flow_gt': flow_gt})
+            warp_mask = torch.from_numpy(np.vstack(warp_mask_list))
+            label_torch_dict.update({'warp_mask': warp_mask})
 
         # for debug use: 
         # time_consume = torch.from_numpy(time_consume)
@@ -1361,6 +1378,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                                    'single_past_dict': past_k_single_label_torch_dict,
                                    'object_ids': object_ids[0],
                                    'pairwise_t_matrix': pairwise_t_matrix,
+                                   'pastk_2_past0_tr_mats': pastk_2_past0_tr_mats,
                                    'curr_lidar_pose': curr_lidar_pose,
                                    'past_lidar_pose': past_k_lidar_pose,
                                    'past_k_time_interval': past_k_time_diff,

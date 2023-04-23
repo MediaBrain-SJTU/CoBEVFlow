@@ -211,7 +211,7 @@ class raindrop_fuse(nn.Module):
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
         return split_x
 
-    def generateFlow(self, feats, pairwise_t_matrix, record_len, flow_gt=None):
+    def generateFlow(self, feats, pairwise_t_matrix, pastk_2_past0_tr_mats, record_len, flow_gt=None, warp_mask=None):
         '''
         1. generate flow from feature sequence
         2. then update the feature
@@ -221,6 +221,7 @@ class raindrop_fuse(nn.Module):
         params:
             feats: (sum(B,N,K), C, H, W)
             pairwise_t_matrix: (B, L, K, 2, 3)
+            pastk_2_past0_tr_mats: (sum(n_cav), K, 2, 3)
             record_len: (B)
 
         return:
@@ -229,9 +230,11 @@ class raindrop_fuse(nn.Module):
         _, C, H, W = feats.shape
         B, L, K = pairwise_t_matrix.shape[:3]
         batch_node_features = self.regroup(feats, record_len, k=K)
+        batch_pastk_2_past0_tr_mats = self.regroup(pastk_2_past0_tr_mats, record_len, k=1)
 
         # debug use
         batch_flow_gt = self.regroup(flow_gt, record_len, 2)
+        batch_warp_mask = self.regroup(warp_mask, record_len, C)
 
         updated_features_list = []
         flow_list = []
@@ -243,55 +246,62 @@ class raindrop_fuse(nn.Module):
             # t_matrix[i, j]-> from i to j
             # t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
             node_features = batch_node_features[b]
-            # neighbor_feature = warp_affine_simple(node_features, t_matrix, (H, W))
+            t_matrix = batch_pastk_2_past0_tr_mats[b].view(-1, 2, 3) # (Nxk, 2, 3)
+            node_features = warp_affine_simple(node_features, t_matrix, (H, W))
             node_features = node_features.view(-1, K, C, H, W) # (N, k, C, H, W)
+
+            # debug_path = '/remote-home/share/sizhewei/logs/where2comm_motionnet_flow_regular_new/debug_path'
+            # torch.save(node_features, debug_path + '/node_features.pt')
             
-            # # MotionNet generating flow
-            # bevs = self.stpn(node_features)
-            # flow = self.motion_pred(bevs) # [N, 2, H, W]
-            # flow_list.append(flow)
-            # # Motion State Classification head
-            # state_class_pred = self.state_classify(bevs)
-            # state_class_pred_list.append(state_class_pred)
-
-            # TODO: use gt flow for debug use
-            flow = batch_flow_gt[b].view(-1, 2, H, W)  # (N, 2, H, W)
+            # MotionNet generating flow
+            bevs = self.stpn(node_features)
+            flow = self.motion_pred(bevs) # [N, 2, H, W]
             flow_list.append(flow)
-            state_class_pred = torch.ones(1, H, W)
+            
+            # Motion State Classification head
+            state_class_pred = self.state_classify(bevs)
             state_class_pred_list.append(state_class_pred)
-            ##########################################
 
-            # # Original flow warp code
-            # # Given disp shift feature
-            # x_coord = torch.arange(W).float()   # [0, ..., W]
-            # y_coord = torch.arange(H).float()   # [0, ..., H]
-            # y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W]
-            # grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0).unsqueeze(0).expand(flow.shape[0], -1, -1, -1).to(flow.device)  # N, 2, H, W
-            # # updated_grid = grid + flow * (state_class_pred.sigmoid() > self.flow_thre)
-            # updated_grid = grid + flow
+            # # TODO: use gt flow for debug use
+            # flow = batch_flow_gt[b].view(-1, 2, H, W)  # (N, 2, H, W)
+            # mask = batch_warp_mask[b].view(-1, C, H, W)  # (N, 1, H, W)
+            # flow_list.append(flow)
+            # state_class_pred = torch.ones(1, H, W)
+            # state_class_pred_list.append(state_class_pred)
+            # # flow_old = flow.clone()
+            # ##########################################
+
+            # Original flow warp code
+            # Given disp shift feature
+            x_coord = torch.arange(W).float()   # [0, ..., W]
+            y_coord = torch.arange(H).float()   # [0, ..., H]
+            y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W]
+            grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0).unsqueeze(0).expand(flow.shape[0], -1, -1, -1).to(flow.device)  # N, 2, H, W
+            # updated_grid = grid + flow * (state_class_pred.sigmoid() > self.flow_thre)
+            updated_grid = grid + flow
             
             # # TODO: debug use, do not use gt flow, keep the original delay feature as the fusion input. 
             # # updated_grid = grid
             
             # # generate the mask for filtering out the pixels which moved to other locations but not filled by others
-            # mask_list = []
-            # for i in range(flow.shape[0]):
-            #     mask_list.append(get_warped_feature_mask(flow[i], updated_grid[i]))
-            # mask = torch.stack(mask_list, dim=0)
-            # mask = mask.unsqueeze(1).repeat(1, C, 1, 1).to(flow.device)
-            #################################
+            mask_list = []
+            for i in range(flow.shape[0]):
+                mask_list.append(get_warped_feature_mask(flow[i], updated_grid[i]))
+            mask = torch.stack(mask_list, dim=0)
+            mask = mask.unsqueeze(1).repeat(1, C, 1, 1).to(flow.device)
+            # ################################
             
-            # updated_grid[:, 0, :, :] = updated_grid[:, 0, :, :] / (W / 2.0) - 1.0
-            # updated_grid[:, 1, :, :] = updated_grid[:, 1, :, :] / (H / 2.0) - 1.0
-            # latest_node_features = node_features[:, 0, :, :, :] # (N, C, H, W)
-            # updated_features = F.grid_sample(latest_node_features, grid=updated_grid.permute(0, 2, 3, 1), mode='bilinear', align_corners=False)
+            updated_grid[:, 0, :, :] = updated_grid[:, 0, :, :] / (W / 2.0) - 1.0
+            updated_grid[:, 1, :, :] = updated_grid[:, 1, :, :] / (H / 2.0) - 1.0
+            latest_node_features = node_features[:, 0, :, :, :] # (N, C, H, W)
+            updated_features = F.grid_sample(latest_node_features, grid=updated_grid.permute(0, 2, 3, 1), mode='bilinear', align_corners=False)
             
             # use szwei flow generator
-            latest_node_features = node_features[:, 0, :, :, :] # (N, C, H, W)
-            updated_features = F.grid_sample(latest_node_features, grid=flow.permute(0, 2, 3, 1), mode='bilinear', align_corners=False)
+            # latest_node_features = node_features[:, 0, :, :, :] # (N, C, H, W)
+            # updated_features = F.grid_sample(latest_node_features, grid=flow.permute(0, 2, 3, 1), mode='bilinear', align_corners=False)
             
             # mask the features
-            # updated_features = mask * updated_features
+            updated_features = mask * updated_features
             # ego feature use the latest feature (no delay)
             updated_features[0, :, :, :] = latest_node_features[0, :, :, :]
 
@@ -500,7 +510,7 @@ class raindrop_fuse(nn.Module):
 
         return updated_features_all, loss, flow_all, state_class_pred_all
 
-    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, flow_gt=None, box_flow=None, reserved_mask=None):
+    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, flow_gt=None, box_flow=None, reserved_mask=None, warp_mask=None, pastk_2_past0_tr_mats=None):
         """
         Fusion forwarding.
         
@@ -542,6 +552,13 @@ class raindrop_fuse(nn.Module):
         pairwise_t_matrix[...,0,2] = pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
         pairwise_t_matrix[...,1,2] = pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
 
+        # (sum(n_cav), k, 4, 4) -> (sum(n_cav), k, 2, 3)
+        pastk_2_past0_tr_mats = pastk_2_past0_tr_mats[:,:,[0, 1],:][:,:,:,[0, 1, 3]]
+        pastk_2_past0_tr_mats[...,0,1] = pastk_2_past0_tr_mats[...,0,1] * H / W
+        pastk_2_past0_tr_mats[...,1,0] = pastk_2_past0_tr_mats[...,1,0] * W / H
+        pastk_2_past0_tr_mats[...,0,2] = pastk_2_past0_tr_mats[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
+        pastk_2_past0_tr_mats[...,1,2] = pastk_2_past0_tr_mats[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
+
         # 2. feature compensation with flow
         # 2.1 generate flow, 在同一个坐标系内，计算每个cav的flow
         # 2.2 compensation
@@ -551,7 +568,7 @@ class raindrop_fuse(nn.Module):
         elif self.design == 2:
             updated_features, flow_recon_loss, flow, state_preds = self.update_features_boxflow_design_2(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
         else:
-            updated_features, flow, state_preds = self.generateFlow(x, pairwise_t_matrix, record_len, flow_gt) # (BxN, C, H, W)
+            updated_features, flow, state_preds = self.generateFlow(x, pairwise_t_matrix, pastk_2_past0_tr_mats, record_len, flow_gt, warp_mask) # (BxN, C, H, W)
         
         # 3. feature fusion
         if self.multi_scale:

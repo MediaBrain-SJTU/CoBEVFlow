@@ -39,8 +39,11 @@ def test_parser():
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
+    parser.add_argument('--pretrained_path', default='',
+                        help='The path of the model need to be fine tuned.')
     parser.add_argument('--note', default="ir_thre_0_d_20", type=str, help='save folder name')
     parser.add_argument('--p', default=None, type=float, help='binomial probability')
+    parser.add_argument('--two_stage', help='whether to use two stage training', default=0, type=int)
     opt = parser.parse_args()
     return opt
 
@@ -84,6 +87,24 @@ def main():
     print('Loading Model from checkpoint')
     saved_path = opt.model_dir
     _, model = train_utils.load_saved_model_diff(saved_path, model)
+    
+    if opt.pretrained_path: # load traj pred model
+        saved_path = opt.pretrained_path
+        pretrained_model_dict = torch.load(saved_path, map_location='cpu')
+        diff_keys = {k:v for k, v in pretrained_model_dict.items() if k not in model.state_dict()}
+        modified_pretrained_model_dict = OrderedDict()
+        for k, v in pretrained_model_dict['model_dict'].items():
+            modified_pretrained_model_dict.update({'matcher.compensate_motion.'+k: v})
+        diff_keys = {k:v for k, v in modified_pretrained_model_dict.items() if k not in model.state_dict()}
+        if diff_keys:
+            print(f"!!! PreTrained model has keys: {diff_keys.keys()}, \
+                which are not in the model you have created!!!")
+        # diff_keys = {k:v for k, v in model.state_dict().items() if k not in pretrained_model_dict.keys()}
+        # if diff_keys:
+        #     print(f"!!! Created model has keys: {diff_keys.keys()}, \
+        #         which are not in the model you have trained!!!")
+        model.load_state_dict(modified_pretrained_model_dict, strict=False)
+    
     model.eval()
 
     # setting noise
@@ -117,7 +138,7 @@ def main():
     avg_time_delay = 0.0
     avg_sample_interval = 0.0
     for i, batch_data in tenumerate(data_loader):
-        # if i <19:
+        # if i < 90:
         #     continue # TODO: debug use
 
         # if i> 50:
@@ -153,10 +174,16 @@ def main():
                                                         model,
                                                         opencood_dataset)
             elif opt.fusion_method == 'intermediate':
-                pred_box_tensor, pred_score, gt_box_tensor = \
-                    inference_utils.inference_intermediate_fusion(batch_data,
-                                                                model,
-                                                                opencood_dataset)
+                if opt.two_stage == 1:
+                    pred_box_tensor, pred_score, gt_box_tensor = \
+                        inference_utils.inference_intermediate_fusion_flow_module(batch_data,
+                                                                    model,
+                                                                    opencood_dataset)
+                else:
+                    pred_box_tensor, pred_score, gt_box_tensor = \
+                        inference_utils.inference_intermediate_fusion(batch_data,
+                                                                    model,
+                                                                    opencood_dataset)
             elif opt.fusion_method == 'no':
                 pred_box_tensor, pred_score, gt_box_tensor = \
                     inference_utils.inference_no_fusion(batch_data,

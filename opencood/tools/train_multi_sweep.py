@@ -77,6 +77,7 @@ def train_parser():
     parser.add_argument('--pretrained_path', default='',
                         help='The path of the model need to be fine tuned.')
     parser.add_argument('--device', '-d', default="cuda", help='cuda or cpu')
+    parser.add_argument('--two_stage', help='whether to use two stage training', default=0, type=int)
     opt = parser.parse_args()
     return opt
 
@@ -284,8 +285,10 @@ def main():
 
             # sample_interval += batch_data['ego']['avg_sample_interval'] # debug use 打开
             # TODO: dataset parameter is only used for training flow module
-            # ouput_dict = model(batch_data['ego'], opencood_train_dataset)
-            ouput_dict = model(batch_data['ego'])
+            if opt.two_stage:
+                ouput_dict = model(batch_data['ego'], opencood_train_dataset)
+            else: 
+                ouput_dict = model(batch_data['ego'])
 
             # end_time = time.time()
             # time_training += (end_time - start_time)
@@ -365,8 +368,10 @@ def main():
                     batch_data = train_utils.to_device(batch_data, device)
                     batch_data['ego']['epoch'] = epoch
                     # TODO: dataset parameter is only used for training flow module
-                    # ouput_dict = model(batch_data['ego'], opencood_validate_dataset)
-                    ouput_dict = model(batch_data['ego'])
+                    if opt.two_stage:
+                        ouput_dict = model(batch_data['ego'], opencood_validate_dataset)
+                    else:
+                        ouput_dict = model(batch_data['ego'])
 
                     if kd_flag:
                         teacher_output_dict = teacher_model(batch_data['ego'])

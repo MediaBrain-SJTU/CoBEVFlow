@@ -327,6 +327,73 @@ class raindrop_fuse(nn.Module):
         batch_flow_map = self.regroup(flow_map, record_len, k=1)
         batch_reserved_mask = self.regroup(reserved_mask, record_len, k=1)
 
+        updated_features_list = []
+        flow_list = []
+        state_class_pred_list = []
+        gt_flow_map_list = []
+        for b in range(B):
+            # number of valid agent
+            N = record_len[b]
+            node_features = batch_node_features[b]
+            node_features = node_features.view(-1, K, C, H, W) # (N, k, C, H, W)
+            flow = batch_flow_map[b] # .view(-1, 2, H, W) # [N, H, W, 2]
+            # flow = self.fine_conv(flow) # [N, H, W, 2] # TODO: conv
+            # flow_list.append(flow)
+            
+            latest_node_features = node_features[:, 0, :, :, :] # past_0 features, (N, C, H, W) 
+            updated_features = F.grid_sample(latest_node_features, grid=flow, mode='bilinear', align_corners=False)
+
+            updated_features = updated_features*batch_reserved_mask[b] # (N, C, H, W)
+            updated_features_list.append(updated_features)
+
+        # flow_pred = torch.cat(flow_list, dim=0) # (sum(N_b), H, W, 2)
+        # gt_flow_norm = torch.cat(gt_flow_map_list, dim=0) # (sum(N_b), H, W, 2)
+        # # compute the flow map loss:
+        # loss = F.smooth_l1_loss(flow_pred, gt_flow_norm)
+
+        updated_features_all = torch.cat(updated_features_list, dim=0)  # (sum(B,N), C, H, W)
+
+        return updated_features_all
+    
+
+    def update_features_boxflow_design_1(self, feats, pairwise_t_matrix, record_len, flow_map, reserved_mask, flow_gt):
+        """
+        Update features with box flow.
+        
+        Parameters
+        ----------
+        feats : torch.Tensor
+            input data, 
+            shape: (sum(n_cav), C, H, W)
+        
+        pairwise_t_matrix : torch.Tensor
+            The transformation matrix from each cav to ego, 
+            shape: (B, L, K, 2, 3) 
+
+        record_len : list
+            shape: (B)
+            
+        flow_map: torch.Tensor
+            flow generate by past 2 frames detection boxes
+            shape: (sum(N_b), H, W, 2)
+
+        reserved_mask: torch.Tensor
+            shape: (sum(N_b), C, H, W)
+
+        gt_flow: torch.Tensor
+            shape: (sum(N_b), H, W, 2)
+            
+        Returns
+        -------
+        Warped feature.
+        """
+        _, C, H, W = feats.shape
+        B, L, K = pairwise_t_matrix.shape[:3]
+        batch_node_features = self.regroup(feats, record_len, k=K)
+
+        batch_flow_map = self.regroup(flow_map, record_len, k=1)
+        batch_reserved_mask = self.regroup(reserved_mask, record_len, k=1)
+
         # debug use
         batch_flow_gt = self.regroup(flow_gt, record_len, k=2)
 
@@ -340,7 +407,7 @@ class raindrop_fuse(nn.Module):
             node_features = batch_node_features[b]
             node_features = node_features.view(-1, K, C, H, W) # (N, k, C, H, W)
             flow = batch_flow_map[b] # .view(-1, 2, H, W) # [N, H, W, 2]
-            flow = self.fine_conv(flow) # [N, H, W, 2]
+            # flow = self.fine_conv(flow) # [N, H, W, 2] # TODO: conv
             flow_list.append(flow)
             # # motion net flow
             # bevs = self.stpn(node_features)
@@ -527,8 +594,10 @@ class raindrop_fuse(nn.Module):
         # 2.1 generate flow, 在同一个坐标系内，计算每个cav的flow
         # 2.2 compensation
         # x: (BxNxK, C, H, W) -> (BxN, C, H, W)
-        if self.design == 1:
-            updated_features, flow_recon_loss = self.update_features_boxflow(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
+        if self.design == 0:
+            updated_features = self.update_features_boxflow(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
+        elif self.design == 1:
+            updated_features, flow_recon_loss = self.update_features_boxflow_design_1(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
         elif self.design == 2:
             updated_features, flow_recon_loss, flow, state_preds = self.update_features_boxflow_design_2(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
         else:
@@ -655,8 +724,9 @@ class raindrop_fuse(nn.Module):
             x_fuse = torch.stack(x_fuse)
 
             # self.fuse_modsules(x_fuse, record_len)
-        
-        if self.design == 1:
+        if self.design == 0:
+            return x_fuse, communication_rates, {}
+        elif self.design == 1:
             return x_fuse, communication_rates, {}, flow_recon_loss
         elif self.design == 2:
             return x_fuse, communication_rates, {}, flow_recon_loss #, flow, state_preds
