@@ -17,6 +17,7 @@ import json
 import opencood.data_utils.datasets
 import opencood.data_utils.post_processor as post_processor
 from opencood.utils import box_utils
+from scipy import stats
 
 from opencood.data_utils.datasets import intermediate_fusion_dataset
 from opencood.data_utils.augmentor.data_augmentor import DataAugmentor
@@ -63,7 +64,7 @@ def id_to_str(id, digits=6):
         id //= 10
     return result
 
-class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.IntermediateFusionDataset):
+class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.IntermediateFusionDataset):
     """
     Written by sizhewei @ 2022/09/28
     This class is for intermediate fusion where each vehicle transmit the
@@ -77,7 +78,21 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         self.data_augmentor = DataAugmentor(params['data_augment'],
                                             train)
         self.max_cav = 2
-        self.k = params['time_delay']
+        
+        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
+            self.k = params['num_sweep_frames']
+        else:
+            self.k = 1
+
+        if 'binomial_n' in params:
+            self.binomial_n = params['binomial_n']
+        else:
+            self.binomial_n = 0
+
+        if 'binomial_p' in params:
+            self.binomial_p = params['binomial_p']
+        else:
+            self.binomial_p = 0
         
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
@@ -140,8 +155,8 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
             if self.is_valid_id(veh_idx):
                 self.data.append(veh_idx)
 
-        print("ASync dataset with {} time delay initialized! {} samples totally!".format(self.k, len(self.data)))
-    
+        print("Irregular async dataset with past %d frames and expectation time delay = %d initialized! %d samples totally!" % (self.k, int(self.binomial_n*self.binomial_p), len(self.data)))
+
     def is_valid_id(self, veh_frame_id):
         """
         Written by sizhewei @ 2022/10/05
@@ -163,18 +178,18 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         frame_info = self.co_idx2info[veh_frame_id]
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
         cur_inf_info = self.inf_idx2info[inf_frame_id]
-        if (
-            int(inf_frame_id) - self.k < int(cur_inf_info["batch_start_id"])
-            or id_to_str(int(inf_frame_id) - self.k) not in self.inf_idx2info
-        ):
+        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
             return False
+        for delay_id in range(self.binomial_n * self.k):
+            if id_to_str(int(inf_frame_id) - delay_id) not in self.inf_idx2info:
+                return False
 
         return True
 
     def retrieve_base_data(self, idx):
         """
         Modified by sizhewei @ 2022/09/28
-        Given the index, return the corresponding async data (time delay: self.k).
+        Given the index, return the corresponding async data (time delay expection = sum(B(n, p)) ).
 
         Parameters
         ----------
@@ -186,6 +201,18 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         data : dict
             The dictionary contains loaded yaml params and lidar data for
             each cav.
+            {
+                [0]  / [1]: {
+                    'ego' : True / False,
+                    'params' : {
+                        'vehicles':
+                        'lidar_pose':
+                    },
+                    'lidar_np' : 
+                    'veh_frame_id' :
+                    'avg_time_delay' : ([1] only)
+                }
+            }
         """
         veh_frame_id = self.data[idx]
         # print('veh_frame_id: ',veh_frame_id,'\n')
@@ -195,7 +222,13 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         frame_info = self.co_idx2info[veh_frame_id]
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
 
-        inf_frame_id = id_to_str(int(inf_frame_id) - self.k)
+        # 生成冻结分布函数
+        bernoulliDist = stats.bernoulli(self.binomial_p) 
+        # B(n, p)
+        trails = bernoulliDist.rvs(self.binomial_n)
+        sample_interval = sum(trails)
+
+        inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
 
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()
@@ -234,6 +267,7 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
             'infrastructure-side', cur_inf_info['pointcloud_path']))
         data[0]['veh_frame_id'] = veh_frame_id
         data[1]['veh_frame_id'] = inf_frame_id
+        data[1]['avg_time_delay'] = sample_interval
         return data
 
     def __getitem__(self, idx):
@@ -416,6 +450,17 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
              'lidar_poses_clean': lidar_poses_clean,
              'lidar_poses': lidar_poses})
 
+        # for irregular time delay use:
+        if len(too_far) == 0:
+            avg_time_delay = base_data_dict[1]['avg_time_delay']
+            cp_rate = 1
+        else:
+            avg_time_delay = self.binomial_n
+            cp_rate = 0
+        processed_data_dict['ego'].update(
+            {'avg_time_delay': avg_time_delay,
+                'cp_rate': cp_rate})
+
         if self.kd_flag:
             processed_data_dict['ego'].update({'teacher_processed_lidar':
                 stack_feature_processed})
@@ -468,3 +513,115 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
 
         return self.post_processor.generate_object_center_dairv2x(cav_contents,
                                                         reference_lidar_pose)
+
+    def collate_batch_train(self, batch):
+        # Intermediate fusion is different the other two
+        output_dict = {'ego': {}}
+
+        object_bbx_center = []
+        object_bbx_mask = []
+        object_ids = []
+        processed_lidar_list = []
+        # used to record different scenario
+        record_len = []
+        label_dict_list = []
+        lidar_pose_list = []
+        lidar_pose_clean_list = []
+
+        # average time delay
+        avg_time_delay = []
+        # cp rate
+        cp_rate = []
+        
+        # pairwise transformation matrix
+        pairwise_t_matrix_list = []
+
+        if self.kd_flag:
+            teacher_processed_lidar_list = []
+        if self.visualize:
+            origin_lidar = []
+
+        for i in range(len(batch)):
+            ego_dict = batch[i]['ego']
+            object_bbx_center.append(ego_dict['object_bbx_center'])
+            object_bbx_mask.append(ego_dict['object_bbx_mask'])
+            object_ids.append(ego_dict['object_ids'])
+            lidar_pose_list.append(ego_dict['lidar_poses']) # ego_dict['lidar_pose'] is np.ndarray [N,6]
+            lidar_pose_clean_list.append(ego_dict['lidar_poses_clean'])
+
+            processed_lidar_list.append(ego_dict['processed_lidar']) # different cav_num, ego_dict['processed_lidar'] is list.
+            record_len.append(ego_dict['cav_num'])
+
+            label_dict_list.append(ego_dict['label_dict'])
+            pairwise_t_matrix_list.append(ego_dict['pairwise_t_matrix'])
+
+            avg_time_delay.append(ego_dict['avg_time_delay'])
+            cp_rate.append(ego_dict['cp_rate'])
+
+            if self.kd_flag:
+                teacher_processed_lidar_list.append(ego_dict['teacher_processed_lidar'])
+
+            if self.visualize:
+                origin_lidar.append(ego_dict['origin_lidar'])
+
+        # convert to numpy, (B, max_num, 7)
+        object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
+        object_bbx_mask = torch.from_numpy(np.array(object_bbx_mask))
+
+
+        # example: {'voxel_features':[np.array([1,2,3]]),
+        # np.array([3,5,6]), ...]}
+        merged_feature_dict = self.merge_features_to_dict(processed_lidar_list)
+
+        # [sum(record_len), C, H, W]
+        processed_lidar_torch_dict = \
+            self.pre_processor.collate_batch(merged_feature_dict)  # coords 增加了 batch_id 维度，[x, y, z] -> [id, x, y, z]
+        # [2, 3, 4, ..., M], M <= max_cav
+        record_len = torch.from_numpy(np.array(record_len, dtype=int))
+        # [[N1, 6], [N2, 6]...] -> [[N1+N2+...], 6]
+        lidar_pose = torch.from_numpy(np.concatenate(lidar_pose_list, axis=0))
+        lidar_pose_clean = torch.from_numpy(np.concatenate(lidar_pose_clean_list, axis=0))
+        label_torch_dict = \
+            self.post_processor.collate_batch(label_dict_list)
+
+        # (B, max_cav)
+        pairwise_t_matrix = torch.from_numpy(np.array(pairwise_t_matrix_list))
+
+        # add pairwise_t_matrix to label dict
+        label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
+        label_torch_dict['record_len'] = record_len
+
+        # object id is only used during inference, where batch size is 1.
+        # so here we only get the first element.
+        output_dict['ego'].update({'object_bbx_center': object_bbx_center,
+                                   'object_bbx_mask': object_bbx_mask,
+                                   'processed_lidar': processed_lidar_torch_dict,
+                                   'record_len': record_len,
+                                   'label_dict': label_torch_dict,
+                                   'object_ids': object_ids[0],
+                                   'pairwise_t_matrix': pairwise_t_matrix,
+                                   'lidar_pose_clean': lidar_pose_clean,
+                                   'lidar_pose': lidar_pose})
+
+        avg_time_delay = float(np.mean(np.array(avg_time_delay)))
+        cp_rate = float(np.mean(np.array(cp_rate)))
+        output_dict['ego'].update({'avg_time_delay': avg_time_delay,
+                                      'cp_rate': cp_rate})  
+
+
+        if self.visualize:
+            origin_lidar = \
+                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
+            origin_lidar = torch.from_numpy(origin_lidar)
+            output_dict['ego'].update({'origin_lidar': origin_lidar})
+        
+        if self.kd_flag:
+            teacher_processed_lidar_torch_dict = \
+                self.pre_processor.collate_batch(teacher_processed_lidar_list)
+            output_dict['ego'].update({'teacher_processed_lidar':teacher_processed_lidar_torch_dict})
+
+        if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
+            (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item():
+            return None
+
+        return output_dict

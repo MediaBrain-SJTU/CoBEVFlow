@@ -34,7 +34,7 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=80,
+    parser.add_argument('--save_vis_interval', type=int, default=200,
                         help='interval of saving visualization')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
@@ -43,7 +43,10 @@ def test_parser():
                         help='The path of the model need to be fine tuned.')
     parser.add_argument('--note', default="ir_thre_0_d_20", type=str, help='save folder name')
     parser.add_argument('--p', default=None, type=float, help='binomial probability')
+    parser.add_argument('--ir_range', default=None, type=float, help='binomial probability')
     parser.add_argument('--two_stage', help='whether to use two stage training', default=0, type=int)
+    parser.add_argument('--config_suffix', default='', type=str, help='config suffix')
+    parser.add_argument('--dataset', default='o', type=str, choices=['o', 'd'], help='which dataset will be used, o is for OPV2V/IRV2V, d is for DAIR-V2X.')
     opt = parser.parse_args()
     return opt
 
@@ -55,7 +58,7 @@ def main():
 
     assert opt.fusion_method in ['late', 'early', 'intermediate', 'no', 'no_w_uncertainty'] 
 
-    hypes = yaml_utils.load_yaml(None, opt)
+    hypes = yaml_utils.load_yaml(None, opt, config_suffix=opt.config_suffix)
     
     hypes['validate_dir'] = hypes['test_dir']
     if "OPV2V" in hypes['test_dir'] or "v2xsim" in hypes['test_dir']:
@@ -64,6 +67,19 @@ def main():
     # update binomial prob
     if 'binomial_p' in hypes and opt.p is not None:
         hypes['binomial_p'] = opt.p
+    if 'binomial_p' not in hypes and opt.p is None:
+        hypes['binomial_p'] = 0.0
+        print(f"!!! No binomial probability is set, using default value: {hypes['binomial_p']} !!!")
+
+    if 'binomial_n' not in hypes:
+        hypes['binomial_n'] = 1
+        print(f"!!! No binomial n is set, using default value: {hypes['binomial_n']} !!!")
+    
+    if 'ir_range' in hypes and opt.ir_range is not None:
+        hypes['ir_range'] = opt.ir_range
+    if 'ir_range' not in hypes and opt.ir_range is None:
+        hypes['ir_range'] = 0
+        print(f"!!! No ir range is set, using default value: {hypes['ir_range']} !!!")
     
     # This is used in visualization
     # left hand: OPV2V
@@ -137,12 +153,16 @@ def main():
     i = -1
     avg_time_delay = 0.0
     avg_sample_interval = 0.0
+    avg_time_var = 0.0
+    if opt.dataset == 'd':
+        avg_cp_rate = 0.0
     for i, batch_data in tenumerate(data_loader):
         # if i < 90:
         #     continue # TODO: debug use
 
-        # if i> 50:
-        #     print("finished!")
+        if i> 100:
+            print("finished!")
+            break
             
         if batch_data is None:
             continue
@@ -158,9 +178,31 @@ def main():
                 avg_time_delay += (sum(unit_time_delay[1:])/len(unit_time_delay[1:]))
                 avg_sample_interval += (float(sum(unit_sample_interval[1:]))/len(unit_sample_interval[1:]))
             if opt.fusion_method == 'intermediate':
-                avg_time_delay += batch_data['ego']['avg_time_delay']
-                avg_sample_interval += batch_data['ego']['avg_sample_interval']
-            
+                if opt.dataset == 'o':
+                    try:
+                        avg_time_delay += batch_data['ego']['avg_time_delay']
+                        avg_sample_interval += batch_data['ego']['avg_sample_interval']
+                    except KeyError:
+                        avg_sample_interval += 0
+                        avg_time_delay += 0
+                    try: 
+                        avg_time_var += batch_data['ego']['avg_time_var']
+                    except:
+                        avg_time_var += -1
+                elif opt.dataset == 'd':
+                    try:
+                        avg_time_delay += (-batch_data['ego']['avg_time_delay'])
+                    except KeyError:
+                        avg_time_delay += 0
+                    try:
+                        avg_sample_interval += batch_data['ego']['avg_time_delay']
+                    except KeyError:
+                        avg_sample_interval += 0
+                    try:
+                        avg_cp_rate += (batch_data['ego']['cp_rate'])
+                    except KeyError:
+                        avg_cp_rate += 1
+                        
             batch_data = train_utils.to_device(batch_data, device)
             uncertainty_tensor = None
             if opt.fusion_method == 'late':
@@ -225,7 +267,7 @@ def main():
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%s'%(str(hypes['binomial_p'])))
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%.2f_%d'%(hypes['binomial_p'], hypes['ir_range']))
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -256,13 +298,20 @@ def main():
         torch.cuda.empty_cache()
     end_time = time.time()
     print("Time Consumed: %.2f minutes" % ((end_time - start_time)/60))
-    
-    avg_time_delay = (avg_time_delay/i) * 50 # unit is ms
-    avg_sample_interval /= i
-    ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, opt.note+'_'+str(hypes['binomial_p']))
+        
+    if opt.dataset == 'o':
+        avg_time_delay = (avg_time_delay/i) * 50 # unit is ms
+        avg_sample_interval /= i
+        avg_time_var /= i
+        ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
+                                    opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, avg_time_var, opt.note+'_'+str("%.2f"%hypes['binomial_p'])+str("_%d"%hypes['ir_range']))
+    elif opt.dataset == 'd':
+        avg_sample_interval /= i
+        avg_cp_rate /= i
+        ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
+                                    opt.model_dir, noise_level, avg_cp_rate, avg_sample_interval, opt.note+'_'+str("%.2f"%hypes['binomial_p']), dataset=opt.dataset)
     print("Module with sample interval expection: {}".format(hypes['binomial_n']*hypes['binomial_p']))
-
+    print(f"IR sample range is {hypes['ir_range']}")
 
 if __name__ == '__main__':
     main()

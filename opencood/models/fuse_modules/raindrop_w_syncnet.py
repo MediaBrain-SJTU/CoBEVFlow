@@ -131,7 +131,8 @@ class raindrop_fuse(nn.Module):
             if self.agg_mode == 'MAX': # max fusion, debug use
                 self.fuse_modules = MaxFusion()
 
-        self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 704, k = 3)
+        self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 704, k = 2, TM_Flag = False)
+        print('*** channel_size = 64, h = 200, w = 704, k = 2, TM_Flag = False ***')
 
         # self.stpn = STPN(args['channel_size'])
         # self.motion_pred = MotionPrediction(seq_len=1)
@@ -189,6 +190,7 @@ class raindrop_fuse(nn.Module):
             non_ego_feats = all_feats[1:].clone()
             non_ego_feats = non_ego_feats.reshape(-1, K, C, H, W)
             estimated_non_ego_feats = self.syncnet(non_ego_feats[:,1:], [1]) # [N-1, 1, C, H, W]
+            # estimated_non_ego_feats = non_ego_feats[:, 1:2]
             updated_features_list.append(torch.cat([all_feats[0].unsqueeze(0), estimated_non_ego_feats[:,0]], dim=0))
             recon_loss = F.smooth_l1_loss(estimated_non_ego_feats, non_ego_feats[:,:1])
             all_recon_loss += recon_loss

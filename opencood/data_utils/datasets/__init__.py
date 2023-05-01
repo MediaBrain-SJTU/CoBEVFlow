@@ -16,6 +16,7 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_v2 import Intermed
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_v2x import IntermediateFusionDatasetV2V2X
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_dair import IntermediateFusionDatasetV2DAIR
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_delay import IntermediateFusionDatasetDAIRAsync
+from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular import IntermediateFusionDatasetDAIRIrregular
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_multisweep import IntermediateFusionDatasetDAIRMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_multisweep import IntermediateFusionDatasetMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import IntermediateFusionDatasetIrregular
@@ -27,6 +28,7 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_fl
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_compensation import IntermediateFusionDatasetIrregularFlowCompensation
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_singleframe import IntermediateFusionDatasetIrregularSingleframe
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_new import IntermediateFusionDatasetIrregularFlowNew
+from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_variance import IntermediateFusionDatasetIrregularFlowVariance
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -52,7 +54,9 @@ __all__ = {
     'IntermediateFusionDatasetIrregularFlow': IntermediateFusionDatasetIrregularFlow, 
     'IntermediateFusionDatasetIrregularFlowCompensation': IntermediateFusionDatasetIrregularFlowCompensation,
     'IntermediateFusionDatasetIrregularSingleframe': IntermediateFusionDatasetIrregularSingleframe,
-    'IntermediateFusionDatasetIrregularFlowNew': IntermediateFusionDatasetIrregularFlowNew
+    'IntermediateFusionDatasetIrregularFlowNew': IntermediateFusionDatasetIrregularFlowNew,
+    'IntermediateFusionDatasetDAIRIrregular': IntermediateFusionDatasetDAIRIrregular,
+    'IntermediateFusionDatasetIrregularFlowVariance': IntermediateFusionDatasetIrregularFlowVariance
 }
 
 # the final range for evaluation

@@ -57,7 +57,7 @@ def create_tensor_if_possible(device, gpu_id, redundancy=5):
     memory_total = torch.cuda.get_device_properties(device).total_memory // 1024 // 1024
     memory_free = memory_total - memory_used - 1024*redundancy  # 单位：MB, 冗余 5GB
     
-    memory_free = 4 # TODO: debug use
+    memory_free = 4 
 
     if memory_free > 0:
         size = (memory_free * 1024 * 1024 // 4)  # 每个 float 占用 4 字节
@@ -87,6 +87,14 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = str(opt.device)
 
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
+
+    finetune_flag = False
+    if 'is_finetune' in hypes:
+        finetune_flag = hypes['is_finetune']
+    if finetune_flag:
+        assert hypes['is_generate_gt_flow'] and hypes['only_tune_header']
+        finetune_time_interval = int(hypes['binomial_n'] * hypes['binomial_p'])
+        print('### Finetune mode, only tune header. ###')
 
     print('### Dataset Building ... ###')
     start_time = time.time()
@@ -169,13 +177,15 @@ def main():
     if opt.model_dir:
         saved_path = opt.model_dir
         init_epoch, model = train_utils.load_saved_model_diff(saved_path, model)
+        if finetune_flag:
+            init_epoch = 0 # if finetune, we set the init_epoch to 10
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer, init_epoch=init_epoch)
 
     else:
         init_epoch = 0
         # TODO: switch between DB and v100/a6000
-        # log_path = '/remote-home/share/sizhewei'
-        log_path = '/DB/data/sizhewei'
+        log_path = '/remote-home/share/sizhewei'
+        # log_path = '/DB/data/sizhewei'
         # if we train the model from scratch, we need to create a folder to save the model
         saved_path = train_utils.setup_train(hypes, log_path)
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer)
@@ -196,7 +206,7 @@ def main():
     proj_first = hypes['fusion']['args']['proj_first']
     # used to help schedule learning rate
 
-    ############ For DiscoNet TODO: 用不到的code 可以删除 ##############
+    ############ For DiscoNet 用不到的code 可以删除 ##############
     if "kd_flag" in hypes.keys():
         kd_flag = True
         teacher_model_name = hypes['kd_flag']['teacher_model'] # point_pillar_disconet_teacher
@@ -241,8 +251,6 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
-            # if i==1: # TODO: debug 用
-            #     break
             if batch_data is None:
                 continue
             # start_time = time.time()
@@ -258,7 +266,6 @@ def main():
             # becomes a list, which containing all data from other cavs
             # as well
 
-            # # TODO:
             # iter_memory = torch.cuda.memory_allocated(device)/1024/1024
             # memory_holder = torch.zeros((2, 2))
             # if iter_memory < 20:
@@ -349,7 +356,7 @@ def main():
             #     del temp_tensor
             #     torch.cuda.empty_cache()
         
-        sample_interval /= i # TODO: 打开
+        sample_interval /= i
         sample_interval_all_epoch += sample_interval
 
         if epoch % hypes['train_params']['eval_freq'] == 0:
@@ -358,7 +365,6 @@ def main():
             print('### %d th epoch trained, start validation! Time consumed %.2f ###' % (epoch, (end_time - start_time)/60))
             with torch.no_grad():
                 for i, batch_data in tenumerate(val_loader):
-
                     if batch_data is None:
                         continue
                     model.zero_grad()
@@ -389,13 +395,16 @@ def main():
             # lowest val loss
             if valid_ave_loss < lowest_val_loss:
                 lowest_val_loss = valid_ave_loss
+                save_checkpoint_prefix = 'net_epoch_bestval_at'
+                if finetune_flag:
+                    save_checkpoint_prefix = f'finetune_{finetune_time_interval}_' + save_checkpoint_prefix
                 torch.save(model.state_dict(),
                        os.path.join(saved_path,
-                                    'net_epoch_bestval_at%d.pth' % (epoch + 1)))
+                                    f'{save_checkpoint_prefix}%d.pth' % (epoch + 1)))
                 if lowest_val_epoch != -1 and os.path.exists(os.path.join(saved_path,
-                                    'net_epoch_bestval_at%d.pth' % (lowest_val_epoch))):
+                                    f'{save_checkpoint_prefix}%d.pth' % (lowest_val_epoch))):
                         os.remove(os.path.join(saved_path,
-                                    'net_epoch_bestval_at%d.pth' % (lowest_val_epoch)))
+                                    f'{save_checkpoint_prefix}%d.pth' % (lowest_val_epoch)))
                 lowest_val_epoch = epoch + 1
 
         if epoch % hypes['train_params']['save_freq'] == 0:

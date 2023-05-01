@@ -91,7 +91,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         # 控制是否采用完全 regular 的数据 （整数timestamp）
         self.is_ab_regular = False
         if 'is_ab_regular' in params and params['is_ab_regular']:
-            self.is_ab_regular = True # TODO: 这里先注释掉，因为这个参数在 yaml 中没有定义
+            self.is_ab_regular = True
 
         # 控制是否需要生成GT flow
         self.is_generate_gt_flow = False
@@ -843,7 +843,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             #  'times': self.times})
 
         if self.is_generate_gt_flow:
-            flow_gt = np.vstack(flow_gt) # (N, 2, H, W)
+            flow_gt = np.vstack(flow_gt) # (N, H, W, 2)
             processed_data_dict['ego'].update({'flow_gt': flow_gt})
             warp_mask = np.vstack(warp_mask) # (N, C, H, W)
             processed_data_dict['ego'].update({'warp_mask': warp_mask})
@@ -851,10 +851,13 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
         try:
+            tmp = past_k_time_diffs_stack[self.k:].reshape(-1, self.k) # (N, k)
+            tmp_past_k_time_diffs = np.concatenate((tmp[:, :1] , (tmp[:, 1:] - tmp[:, :-1])), axis=1) # (N, k)
+            avg_time_diff = sum(tmp_past_k_time_diffs.reshape(-1)) / tmp_past_k_time_diffs.reshape(-1).shape[0]
             processed_data_dict['ego'].update({'avg_sample_interval':\
                 sum(past_k_sample_interval_stack[self.k:]) / len(past_k_sample_interval_stack[self.k:])})
             processed_data_dict['ego'].update({'avg_time_delay':\
-                sum(past_k_time_diffs_stack[self.k:]) / len(past_k_time_diffs_stack[self.k:])})
+                avg_time_diff})
         except ZeroDivisionError:
             # print("!!! ZeroDivisionError !!!")
             return None

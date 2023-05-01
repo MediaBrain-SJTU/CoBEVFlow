@@ -104,12 +104,48 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
             self.reg_head = nn.Conv2d(128 * 3, 7 * args['anchor_number'],
                                     kernel_size=1)
 
+        self.matcher = Matcher()
+
+        self.backbone_fix_flag = False
         if 'backbone_fix' in args.keys() and args['backbone_fix']:
+            self.backbone_fix_flag = True
             self.backbone_fix()
             print('=== backbone fixed ===')
 
-        self.matcher = Matcher()
+        self.only_tune_header_flag = False
+        if 'only_tune_header' in args.keys() and args['only_tune_header']:
+            self.only_tune_header_flag = True
+            self.only_tune_header()
+            print('=== only tune header ===')
+        
+        assert self.backbone_fix_flag == False or self.only_tune_header_flag == False, 'backbone_fix and only_tune_header cannot be True at the same time'
     
+    def only_tune_header(self):
+        """
+        Fix the parameters of backbone during finetune on timedelay
+        """
+        for p in self.pillar_vfe.parameters():
+            p.requires_grad = False
+
+        for p in self.scatter.parameters():
+            p.requires_grad = False
+
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+
+        for p in self.rain_fusion.parameters():
+            p.requires_grad = False
+
+        for p in self.matcher.parameters():
+            p.requires_grad = False
+
+        if self.compression:
+            for p in self.naive_compressor.parameters():
+                p.requires_grad = False
+        if self.shrink_flag:
+            for p in self.shrink_conv.parameters():
+                p.requires_grad = False
+
     def backbone_fix(self):
         """
         Fix the parameters of backbone during finetune on timedelay
@@ -261,17 +297,23 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         psm_single = self.cls_head(spatial_features_2d)
         rm_single = self.reg_head(spatial_features_2d)
 
-        # generate box flow
-        # [B, 256, 50, 176]
-        single_output = {}
-        single_output.update({'psm_single_list': self.regroup(psm_single, record_len, k), 
-        'rm_single_list': self.regroup(rm_single, record_len, k)})
-        box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, psm_single.device)
+        if self.design_mode != 4 and not self.only_tune_header_flag:
+            # generate box flow
+            # [B, 256, 50, 176]
+            single_output = {}
+            single_output.update({'psm_single_list': self.regroup(psm_single, record_len, k), 
+            'rm_single_list': self.regroup(rm_single, record_len, k)})
+            box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, psm_single.device)
 
         if 'flow_gt' in data_dict['label_dict']:
             flow_gt = data_dict['label_dict']['flow_gt']
+            mask_gt = data_dict['label_dict']['warp_mask']
         else:
             flow_gt = None
+        
+        if self.only_tune_header_flag:
+            box_flow_map = flow_gt
+            reserved_mask = mask_gt
 
         # rain attention:
         if self.multi_scale:
@@ -285,6 +327,14 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                     [self.shrink_conv, self.cls_head, self.reg_head],
                     box_flow=box_flow_map, reserved_mask=reserved_mask,
                     flow_gt=flow_gt)
+            elif self.design_mode == 4:
+                fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                    psm_single,
+                    record_len,
+                    pairwise_t_matrix, 
+                    record_frames,
+                    self.backbone,
+                    [self.shrink_conv, self.cls_head, self.reg_head])
             else: 
                 fused_feature, communication_rates, result_dict, flow_recon_loss = self.rain_fusion(batch_dict['spatial_features'],
                     psm_single,

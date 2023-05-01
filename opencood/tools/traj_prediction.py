@@ -1,7 +1,3 @@
-# yuxiwei 
-# box center prediction
-# 2023-04-22
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -279,7 +275,7 @@ class Motion_interaction(nn.Module):
         return predictions
 
 
-def make_model(input_dim, output_dim, num_layers=2, d_model=256, d_ff=1024, num_heads=4, dropout=0.1,neighbor_shreshold=10):
+def make_model(input_dim, output_dim, num_layers=2, d_model=64, d_ff=128, num_heads=2, dropout=0.1,neighbor_shreshold=10):
     c = copy.deepcopy
     attn = MultiHeadedAttention(num_heads, d_model,d_model,d_model,d_model)
     attn_decoder = MultiHeadedAttention(num_heads,d_model,d_model,d_model,d_model)
@@ -290,7 +286,7 @@ def make_model(input_dim, output_dim, num_layers=2, d_model=256, d_ff=1024, num_
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), num_layers),
         Decoder(DecoderLayer(d_model, c(attn), c(ff), dropout), num_layers),
         Embeddings(d_model, input_dim),
-        Embeddings(d_model, input_dim), 
+        Embeddings(d_model, output_dim), 
         c(position),
         c(position),
         Generator(d_model, output_dim),

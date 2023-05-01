@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 
 class SyncLSTM(nn.Module):
-    def __init__(self, channel_size = 256, h = 32, w = 32, k = 3, TM_Flag = True, compressed_size = 32):
+    def __init__(self, channel_size = 256, h = 32, w = 32, k = 3, TM_Flag = False, compressed_size = 32):
         super(SyncLSTM, self).__init__()
         self.k = k
 

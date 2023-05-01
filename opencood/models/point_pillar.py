@@ -24,6 +24,13 @@ class PointPillar(nn.Module):
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
         
+        # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+
+        # self.cls_head = nn.Conv2d(128 * 3, args['anchor_number'],
+        #                           kernel_size=1)
+        # self.reg_head = nn.Conv2d(128 * 3, 7 * args['anchor_number'],
+        #                           kernel_size=1)
+
         # Base BEV Backbone -> ResNetBEVBackbone
         # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
         if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:

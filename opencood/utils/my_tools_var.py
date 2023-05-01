@@ -20,6 +20,7 @@ from pypcd import pypcd
 from tqdm import tqdm
 from tqdm.contrib import tenumerate
 from tqdm.auto import trange
+import glob
 
 import matplotlib.pyplot as plt
 
@@ -169,55 +170,44 @@ if __name__ == "__main__":
     # create_small_dataset(split_name='train')
 
     root_dirs = "/remote-home/share/sizhewei/logs"
-    note = 'major'
+    note = 'ablation'
     save_path = f"./opencood/result_{note}.jpg"
-    title = "Average Precision curves of different methods on the IRV2V dataset at different average time intervals."
+    title = "CoBEVFlow V.S. SyncNet on different Irrgularity."
     
-    split_list = ['late', 'v2vnet', 'v2xvit', 'where2comm', 'cobevflow', 'where2comm_syncnet'] #
+    split_list = ['cobevflow', 'where2comm_syncnet']#, 'GT'] 
+    colors = ['purple', 'gray', 'orange']
     single_split_name = 'single'
 
     num_delay = 15
 
-    max_x = 500 # unit is ms
+    max_x = 30 # unit is ms
     plt.figure()
     fig, ax = plt.subplots(1,2, sharex='col', sharey=False, figsize=(18,6))
     fig.suptitle(f'{title}', fontsize='x-large', y=0.99)
-    fig.text(0.5, 0.03, 'Expectation of time intervals (ms).', ha='center', fontsize='x-large')
+    fig.text(0.5, 0.03, 'Variance of time intervals (ms ^ 2).', ha='center', fontsize='x-large')
     fig.text(0.08, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
     # ax30 = ax[0]; 
     ax50 = ax[0]; ax70 = ax[1]
-    colors = ['lightskyblue', 'lightseagreen', 'tomato', 'orange', 'purple', 'gray']
     for split_i, split_name in enumerate(split_list):
         ap_list = []
-        delays = []
-        if split_name == 'late':
-            method_name = 'Late Fusion'
-            file_name = 'opv2v_late_fusion'
-            eval_name = 'late_delay'
-        elif split_name == 'v2vnet':
-            method_name = 'V2VNet'
-            file_name = 'opv2v_v2vnet_32ch'
-            eval_name = 'v2vnet_32ch_ep23'
-        elif split_name == 'v2xvit':
-            method_name = 'V2X-ViT'
-            file_name = 'opv2v_point_pillar_v2xvit_v1_slren'
-            eval_name = 'v2xvit'
-        elif split_name == 'where2comm':
-            method_name = 'Where2comm'
-            file_name = 'irv2v_where2comm_max_multiscale_resnet'
-            eval_name = 'where2comm_resnet_multiscale'
-        elif split_name == 'where2comm_syncnet':
+        vars = []
+        if split_name == 'where2comm_syncnet':
             method_name = 'SyncNet'
-            file_name = 'irv2v_where2comm_syncnet_wo_tm_test'
-            eval_name = 'syncnet_e8'
+            file_name = 'irv2v_where2comm_syncnet_regular_300_past_3_test'
+            eval_name = 'eval_no_noise_syncnet_var_s100_flip_t'
+            eval_file_list = glob.glob(os.path.join(root_dirs, file_name, f'{eval_name}*.yaml'))
         elif split_name == 'cobevflow':
             method_name = 'CoBEVFlow (ours)'
-            file_name = 'irv2v_where2comm_cobevflow'
-            eval_name = 'cobevflow'
+            file_name = 'irv2v_where2comm_cobevflow_var'
+            eval_name = 'eval_no_noise_cobevflow_var_linear_s100'
+            eval_file_list = glob.glob(os.path.join(root_dirs, file_name, f'{eval_name}*.yaml'))
+            print(eval_file_list)
+        elif split_name == 'GT':
+            method_name = 'Ground Truth'
+            file_name = 'irv2v_where2comm_cobevflow_var'
+            eval_name = 'cobevflow_var_gt_0.50'
         latest_time_delay = -100.00
-        for i in tqdm(np.linspace(0, 0.5, 26)):
-            # log_file = os.path.join(split_name, f"eval_{note}_%.1f.yaml" % i)
-            eval_file = os.path.join(root_dirs, file_name, f"eval_no_noise_{eval_name}_%.2f.yaml" % i)
+        for eval_file in tqdm(eval_file_list):
             
             if not os.path.exists(eval_file):
                 print(f'eval file {eval_file} not exist!')
@@ -226,13 +216,9 @@ if __name__ == "__main__":
                 data = yaml.load(f, Loader=yaml.FullLoader)
             
             try:
-                unit_time_delay = -data['avg_time_delay']
+                avg_time_var = data['avg_time_var']
             except:
-                unit_time_delay = i*1000
-
-            if (unit_time_delay - latest_time_delay) < 30:
                 continue
-            latest_time_delay = unit_time_delay
             
             tmp_aps = []
             tmp_aps.append(data['ap_30'])
@@ -240,7 +226,7 @@ if __name__ == "__main__":
             tmp_aps.append(data['ap_70'])
             ap_list.append(tmp_aps)
 
-            delays.append(unit_time_delay)
+            vars.append(avg_time_var)
 
         ap_list_np = np.array(ap_list)
         ap_list_np = np.transpose(ap_list_np)
@@ -251,8 +237,8 @@ if __name__ == "__main__":
         
         color = colors[split_i]
         # plt.sca(ax30); plt.plot(delays, ap_30_list, color=color, marker='+', label = method_name)
-        plt.sca(ax50); plt.plot(delays, ap_50_list, color=color, marker='+', label = method_name)
-        plt.sca(ax70); plt.plot(delays, ap_70_list, color=color, marker='+', label = method_name)
+        plt.sca(ax50); plt.scatter(vars, ap_50_list, color=color, marker='+', s=60, label = method_name)
+        plt.sca(ax70); plt.scatter(vars, ap_70_list, color=color, marker='+', s=60, label = method_name)
     
     # for single fusion
     method_name = single_split_name.split('_')[0]
@@ -265,16 +251,16 @@ if __name__ == "__main__":
     plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], color=single_color, linestyle='--', label=method_name)
     plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], color=single_color, linestyle='--', label=method_name)
 
-    xaxis = np.linspace(0, max_x, 11)
+    xaxis = np.linspace(0, max_x, 16)
     # ax30.set_title('The Results for AP@0.3'); ax30.grid(True); 
     # ax30.set_xticks(xaxis); \
     #     ax30.legend(loc = 'lower left')
-    yaxis = np.linspace(0.2, 0.9, 5)
+    yaxis = np.linspace(0.6, 0.9, 5)
     ax50.set_title('The Results for AP@0.5'); ax50.grid(True); 
     ax50.set_xticks(xaxis); ax50.set_yticks(yaxis); 
     ax50.legend(loc = 'lower left')
     
-    yaxis = np.linspace(0.1, 0.9, 5)
+    yaxis = np.linspace(0.5, 0.9, 5)
     ax70.set_title('The Results for AP@0.7'); ax70.grid(True); 
     ax70.set_xticks(xaxis); ax70.set_yticks(yaxis); 
     ax70.legend(loc = 'lower left')

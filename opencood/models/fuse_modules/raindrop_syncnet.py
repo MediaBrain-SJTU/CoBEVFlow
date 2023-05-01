@@ -395,7 +395,7 @@ class AttentionFusion(nn.Module):
                                 k=self.sweep_length,
                                 TM_Flag=False)            
         
-        print("================Rain attention Init================")
+        print("================ Rain attention Init ================")
 
 
     

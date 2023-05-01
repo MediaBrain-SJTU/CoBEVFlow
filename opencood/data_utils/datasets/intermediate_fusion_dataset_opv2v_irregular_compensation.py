@@ -594,10 +594,17 @@ class IntermediateFusionDatasetIrregularCompensation(intermediate_fusion_dataset
         processed_data_dict['ego'].update({'sample_idx': idx,
                                             'cav_id_list': cav_id_list})
         try:
-            processed_data_dict['ego'].update({'avg_sample_interval':\
-                sum(past_k_sample_interval_stack[self.k:]) / len(past_k_sample_interval_stack[self.k:])})
+            tmp = past_k_time_diffs_stack[1:].reshape(-1, self.k)
+            tmp_past_k_time_diffs = tmp[:, 1:] - tmp[:, :-1]
+            avg_time_diff = sum(tmp_past_k_time_diffs.reshape(-1)) / tmp_past_k_time_diffs.reshape(-1).shape[0]
             processed_data_dict['ego'].update({'avg_time_delay':\
-                sum(past_k_time_diffs_stack[self.k:]) / len(past_k_time_diffs_stack[self.k:])})
+                avg_time_diff})
+            
+            tmp_past_k_sample_interval = past_k_sample_interval_stack[1:].reshape(-1, self.k)[:, 1:]
+            avg_past_k_sample_interval = sum(tmp_past_k_sample_interval.reshape(-1)) / tmp_past_k_sample_interval.reshape(-1).shape[0]
+            processed_data_dict['ego'].update({'avg_sample_interval':\
+                avg_past_k_sample_interval})
+            
         except ZeroDivisionError:
             # print("!!! ZeroDivisionError !!!")
             return None

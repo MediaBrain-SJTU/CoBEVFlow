@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import math
 
 class SyncLSTM(nn.Module):
-    def __init__(self, channel_size = 256, spatial_size = 32, k = 3, TM_Flag = False, compressed_size = 64):
+    def __init__(self, channel_size = 256, spatial_size = 32, k = 2, TM_Flag = False, compressed_size = 64):
         super(SyncLSTM, self).__init__()
         self.k = k
         self.spatial_size = spatial_size

@@ -281,7 +281,7 @@ class Motion_interaction(nn.Module):
         return predictions
 
 
-def make_model(input_dim, output_dim, num_layers=2, d_model=256, d_ff=1024, num_heads=4, dropout=0.1,neighbor_shreshold=10):
+def make_model(input_dim, output_dim, num_layers=2, d_model=64, d_ff=128, num_heads=2, dropout=0.1,neighbor_shreshold=10):
     c = copy.deepcopy
     attn = MultiHeadedAttention(num_heads, d_model,d_model,d_model,d_model)
     attn_decoder = MultiHeadedAttention(num_heads,d_model,d_model,d_model,d_model)
@@ -292,7 +292,7 @@ def make_model(input_dim, output_dim, num_layers=2, d_model=256, d_ff=1024, num_
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), num_layers),
         Decoder(DecoderLayer(d_model, c(attn), c(ff), dropout), num_layers),
         Embeddings(d_model, input_dim),
-        Embeddings(d_model, input_dim), 
+        Embeddings(d_model, output_dim), 
         c(position),
         c(position),
         Generator(d_model, output_dim),
@@ -414,8 +414,8 @@ class Matcher(nn.Module):
         elif fusion=='feature':
             return self.forward_feature(input_dict, feature)
         elif fusion=='flow':
-            # return self.forward_flow(input_dict, shape_list)
-            return self.forward_flow_multi_frames(input_dict, shape_list)
+            return self.forward_flow(input_dict, shape_list)
+            # return self.forward_flow_multi_frames(input_dict, shape_list)
         else:
             print("Attention, fusion method must be in box or feature!")
 
@@ -706,14 +706,21 @@ class Matcher(nn.Module):
                 cost_mat_center_a = cost_mat_center_a[dist_valid_past2_a[0], :]
                 cost_mat_center_a = cost_mat_center_a[:, dist_valid_past1[0]]
                 
-                # cost_mat_iou = get_ious()
                 cost_mat = cost_mat_center_a.clone()
                 past2_ids_a, past1_ids = linear_sum_assignment(cost_mat.cpu())
                 
                 past2_ids_a = dist_valid_past2_a[0][past2_ids_a]
                 past1_ids = dist_valid_past1[0][past1_ids]
-                # output_dict_past.update({car:past_ids})
-                # output_dict_current.update({car:current_ids})
+
+                if len(past2_ids_a)==0:
+                    print('======= No matched boxes between latest 2 frames! =======')
+                    C, H, W = shape_list
+                    basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
+                    basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=False).to(shape_list.device)
+                    mask = torch.ones(1, C, H, W).to(shape_list) # TODO: rethink ones or zeros
+                    flow_map_list.append(basic_warp_mat)
+                    reserved_mask.append(mask)
+                    continue
 
                 # past2 and past3 match
                 cost_mat_center_b = torch.cdist(center_points_past3, center_points_past2) # [num_cav_past3,num_cav_past2]
@@ -735,48 +742,85 @@ class Matcher(nn.Module):
                 # output_dict_past.update({car:past_ids})
                 # output_dict_current.update({car:current_ids})
 
+                # find the matched obj among three frames
                 a_idx, b_idx = self.get_common_elements(past2_ids_a, past2_ids_b)
 
+                # 最近两帧有匹配的，但是最近的三帧没有
                 # there is no matched object in past frames
                 if len(a_idx)==0 or len(b_idx)==0:
-                    print('======= No matched boxes! =======')
-                    C, H, W = shape_list
-                    basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
-                    basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=False).to(shape_list.device)
-                    mask = torch.ones(1, C, H, W).to(shape_list)
-                    flow_map_list.append(basic_warp_mat)
+                    matched_past2 = center_points_past2[past2_ids_a]
+                    matched_past1 = center_points_past1[past1_ids]
+
+                    time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
+                    if time_length == 0:
+                        time_length = 1
+                    flow = (matched_past1 - matched_past2) / time_length
+
+                    flow = flow*(0-cav_content['past_k_time_diff'][0])
+                    selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
+                    selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
+                    flow_map, mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
+                    flow_map_list.append(flow_map)
                     reserved_mask.append(mask)
                     continue
 
+                # 三帧匹配结果输入预测模块
                 matched_past1 = center_points_past1[past1_ids[a_idx]].unsqueeze(0)
                 matched_past2 = center_points_past2[past2_ids_a[a_idx]].unsqueeze(0)
                 matched_past3 = center_points_past3[past3_ids[b_idx]].unsqueeze(0)
-
-                obj_coords = torch.cat([matched_past1, matched_past2, matched_past3], dim=0)
+                obj_coords = torch.cat([matched_past3, matched_past2, matched_past1], dim=0)
                 obj_coords = obj_coords.permute(1, 0, 2) # (N, k, 2)
 
-                obj_coords_norm = obj_coords - obj_coords[:, :1, :] # (N, k, 2)
-                past_k_time_diff_norm = past_k_time_diff - past_k_time_diff[0] # (k,)
+                obj_coords_norm = obj_coords - obj_coords[:, -1:, :] # (N, k, 2)
+                past_k_time_diff = torch.flip(past_k_time_diff, dims=[0]) # (k,) TODO: check if this is correct
+                past_k_time_diff_norm = past_k_time_diff - past_k_time_diff[-1] # (k,)
 
                 speed = torch.zeros_like(obj_coords_norm) # (N, k, 2)
-                speed[:, 1:, :] = torch.div((obj_coords_norm[:, 1:, :] - obj_coords_norm[:, :-1, :]), ((past_k_time_diff[1:] - past_k_time_diff[:-1]).unsqueeze(-1)).unsqueeze(0)) # (N, k-1, 2) / (1, k-1, 1) 
+                speed[:, 1:, :] = torch.div((obj_coords_norm[:, 1:, :] - obj_coords_norm[:, :-1, :]), ((past_k_time_diff[1:] - past_k_time_diff[:-1]).unsqueeze(-1)).unsqueeze(0)) # (N, k-1, 2) / (1, k-1, 1)    
 
                 obj_input = torch.cat([obj_coords_norm, speed], dim=-1) # (N, k, 4)
 
                 obj_input = obj_input.unsqueeze(0) # (1, N, k, 4)
-                query = torch.zeros(obj_input.shape)[:,:,:1].to(obj_input.device) # (1, N, 1, 4)
-                target_time_diff = torch.tensor([-past_k_time_diff[0]]).to(obj_input.device) # (1,)
-                compensated_coords_norm = self.compensate_motion(obj_input, query, past_k_time_diff_norm, target_time_diff)
+                
+                last_time_length = (past_k_time_diff_norm[-1] - past_k_time_diff_norm[-2])
+                if last_time_length == 0:
+                    print("==== Warning! You met repeated package! ====")
+                    query = torch.zeros(obj_input.shape)[:,:,:1,:2].to(obj_input.device) # (1, N, 1, 2)
+                else: 
+                    query = obj_coords_norm[:, -1:, :] + \
+                        (obj_coords_norm[:, -1:, :]-obj_coords_norm[:, -2:-1, :])*(0-past_k_time_diff[-1]) / \
+                            last_time_length
+                    query = query.unsqueeze(0) # (1, N, 1, 2)
+
+                target_time_diff = torch.tensor([-past_k_time_diff[-1]]).to(obj_input.device) # (1,)
+
+                # target_time_diff = torch.tensor([-past_k_time_diff[0]]).to(obj_input.device) # (1,)
+                compensated_coords_norm = self.compensate_motion(obj_input, query, past_k_time_diff_norm, target_time_diff) + query
 
                 flow = compensated_coords_norm.squeeze(0).squeeze(1) # (N, 2)
-                # time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
-                # if time_length == 0:
-                #     time_length = 1
-                # flow = (matched_past1 - matched_past2) / time_length
 
                 # flow = flow*(0-cav_content['past_k_time_diff'][0])
                 selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids[a_idx],]
                 selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
+
+                # 两帧匹配成功 but三帧匹配失败 将两帧的结果进行插值 com 表示补集
+                if len(a_idx) < len(past2_ids_a): 
+                    com_past1_ids = [elem.item() for id, elem in enumerate(past1_ids) if id not in a_idx]
+                    com_past2_ids = [elem.item() for id, elem in enumerate(past2_ids_a) if id not in a_idx]
+                    matched_past1 = center_points_past1[com_past1_ids]
+                    matched_past2 = center_points_past2[com_past2_ids]
+                    
+                    time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
+                    if time_length == 0:
+                        time_length = 1
+                    com_flow = (matched_past1 - matched_past2) / time_length
+
+                    com_flow = com_flow*(0-cav_content['past_k_time_diff'][0])
+                    com_selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][com_past1_ids,]
+                    com_selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(com_selected_box_3dcenter_past0, order='hwl')
+                    
+                    flow = torch.cat([flow, com_flow], dim=0)
+                    selected_box_3dcorner_past0 = torch.cat([selected_box_3dcorner_past0, com_selected_box_3dcorner_past0], dim=0)
                 
                 # debug use
                 debug_flag = False
@@ -814,7 +858,6 @@ class Matcher(nn.Module):
 
         return features_dict
         '''
-
 
     def forward_flow(self, input_dict, shape_list):
         """
@@ -988,8 +1031,9 @@ class Matcher(nn.Module):
         num_cav = bbox_list.shape[0]
         basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
         basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=align_corners).to(shape_list.device)
-        reserved_area = torch.ones((C, H, W)).to(shape_list.device)  # C, H, W
+        reserved_area = torch.zeros((C, H, W)).to(shape_list.device)  # C, H, W 
         if flow.shape[0] == 0 : 
+            # reserved_area = torch.ones((C, H, W)).to(shape_list.device)  # C, H, W 
             return basic_warp_mat,  reserved_area.unsqueeze(0)  # 返回不变的矩阵
 
         '''
@@ -1054,7 +1098,8 @@ class Matcher(nn.Module):
 
         return basic_warp_mat, reserved_area.unsqueeze(0)
         
-        # below is not used
+        '''
+        ##################################### below is not used
         final_feature = F.grid_sample(feature.unsqueeze(0), basic_warp_mat, align_corners=align_corners)[0]
         
         ####### viz-2: warped feature, flowed box and warped 
@@ -1127,6 +1172,7 @@ class Matcher(nn.Module):
         #######
 
         return final_feature
+        '''
 
     def feature_warp(self, feature, bbox_list, flow, scale=1.25, align_corners=False, file_suffix=""):
         """

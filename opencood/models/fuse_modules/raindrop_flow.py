@@ -25,6 +25,7 @@ from matplotlib import pyplot as plt
 from opencood.models.sub_modules.MotionNet import STPN, MotionPrediction, StateEstimation, FlowUncPrediction
 # from opencood.models.sub_modules.dcn_net import DCNNet
 from opencood.models.comm_modules.where2comm_multisweep import Communication
+from opencood.models.fuse_modules.SyncNet import SyncLSTM
 
 import torch.nn as nn
 
@@ -112,7 +113,7 @@ def get_warped_feature_mask(flow, updated_grid):
     nonzero_idx = get_nonzero_idx(flow, unique_points_idx)
     # print(nonzero_idx)
     
-    # TODO: mask out the outlier idx
+    # mask out the outlier idx
 
     if len(nonzero_idx.shape) > 1:
         mask[nonzero_idx[:, 0], nonzero_idx[:, 1]] = 0
@@ -171,10 +172,13 @@ class raindrop_fuse(nn.Module):
             self.state_classify = StateEstimation(motion_category_num=1)
             self.fine_conv = FineTuneFlow()
             self.fine_conv_2 = FineTuneFlow_2()
-        else:
+        elif self.design == 3:
             self.stpn = STPN(args['channel_size'])
             self.motion_pred = MotionPrediction(seq_len=1)
             self.state_classify = StateEstimation(motion_category_num=1)
+        elif self.design == 4: # SyncNet
+            self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 704, k = 2)
+            print("*** SyncNet init finished! ***")
 
     def regroup(self, x, len, k=0):
         """
@@ -337,13 +341,14 @@ class raindrop_fuse(nn.Module):
             node_features = batch_node_features[b]
             node_features = node_features.view(-1, K, C, H, W) # (N, k, C, H, W)
             flow = batch_flow_map[b] # .view(-1, 2, H, W) # [N, H, W, 2]
-            # flow = self.fine_conv(flow) # [N, H, W, 2] # TODO: conv
+            # flow = self.fine_conv(flow) # [N, H, W, 2] 
             # flow_list.append(flow)
             
             latest_node_features = node_features[:, 0, :, :, :] # past_0 features, (N, C, H, W) 
             updated_features = F.grid_sample(latest_node_features, grid=flow, mode='bilinear', align_corners=False)
 
             updated_features = updated_features*batch_reserved_mask[b] # (N, C, H, W)
+            # updated_features[0, ...] = node_features[0, 0, :, :, :] # (N, C, H, W)
             updated_features_list.append(updated_features)
 
         # flow_pred = torch.cat(flow_list, dim=0) # (sum(N_b), H, W, 2)
@@ -355,7 +360,6 @@ class raindrop_fuse(nn.Module):
 
         return updated_features_all
     
-
     def update_features_boxflow_design_1(self, feats, pairwise_t_matrix, record_len, flow_map, reserved_mask, flow_gt):
         """
         Update features with box flow.
@@ -547,6 +551,40 @@ class raindrop_fuse(nn.Module):
 
         return updated_features_all, loss, flow_all, state_class_pred_all
 
+    # syncnet
+    def generate_estimated_feats(self, feats, pairwise_t_matrix, record_len):
+        '''
+        update the feature by SyncNet
+        Note:
+            1. ego feature does not need to be updated
+
+        params:
+            feats: (sum(B,N,K), C, H, W)
+            pairwise_t_matrix: (B, L, K, 2, 3)
+            record_len: (B)
+
+        return:
+            updated feature: [N, C, H, W]
+        '''
+        _, C, H, W = feats.shape
+        B, L, K = pairwise_t_matrix.shape[:3]
+        batch_node_features = self.regroup(feats, record_len, k=K)
+
+        updated_features_list = []
+        flow_list = []
+        # all_recon_loss = 0
+        for b in range(B):
+            all_feats = batch_node_features[b]
+            non_ego_feats = all_feats[K:].clone()
+            non_ego_feats = non_ego_feats.reshape(-1, K, C, H, W)
+            non_ego_feats = torch.flip(non_ego_feats, [1])
+            estimated_non_ego_feats = self.syncnet(non_ego_feats, [1]) # [N-1, 1, C, H, W]
+            # estimated_non_ego_feats = non_ego_feats[:, 1:2] # TODO:
+            updated_features_list.append(torch.cat([all_feats[0].unsqueeze(0), estimated_non_ego_feats[:,0]], dim=0))
+
+        updated_features_all = torch.cat(updated_features_list, dim=0)  # (sum(B,N), C, H, W)
+        
+        return updated_features_all
 
     def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, flow_gt=None, box_flow=None, reserved_mask=None):
         """
@@ -600,8 +638,10 @@ class raindrop_fuse(nn.Module):
             updated_features, flow_recon_loss = self.update_features_boxflow_design_1(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
         elif self.design == 2:
             updated_features, flow_recon_loss, flow, state_preds = self.update_features_boxflow_design_2(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
-        else:
+        elif self.design == 3:
             updated_features, flow, state_preds = self.generateFlow(x, pairwise_t_matrix, record_len, flow_gt) # (BxN, C, H, W)
+        elif self.design == 4: # SyncNet
+            updated_features = self.generate_estimated_feats(x, pairwise_t_matrix, record_len) # (BxN, C, H, W)
         
         # 3. feature fusion
         if self.multi_scale:
@@ -730,8 +770,11 @@ class raindrop_fuse(nn.Module):
             return x_fuse, communication_rates, {}, flow_recon_loss
         elif self.design == 2:
             return x_fuse, communication_rates, {}, flow_recon_loss #, flow, state_preds
-        else:
+        elif self.design == 3:
             return x_fuse, communication_rates, {}, flow, state_preds
+        elif self.design == 4:
+            return x_fuse, communication_rates, {}
+
 class TemporalFusion(nn.Module):
     def __init__(self, args):
         super(TemporalFusion, self).__init__()

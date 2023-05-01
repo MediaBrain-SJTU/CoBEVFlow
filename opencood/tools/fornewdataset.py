@@ -1,3 +1,8 @@
+'''
+用来给 Yuxi Wei 做 Prediction 模块的训练数据 
+SizheWei 2023.4.23
+'''
+
 import os
 import torch
 from scipy import stats

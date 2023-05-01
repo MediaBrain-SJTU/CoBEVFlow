@@ -29,8 +29,9 @@ def test_parser():
     parser.add_argument('--fusion_method', type=str,
                         default='intermediate',
                         help='no, no_w_uncertainty, late, early or intermediate')
-    parser.add_argument('--save_vis_interval', type=int, default=5,
+    parser.add_argument('--save_vis_interval', type=int, default=500,
                         help='interval of saving visualization')
+    parser.add_argument('--note', default="", type=str, help='save folder name')
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy file')
