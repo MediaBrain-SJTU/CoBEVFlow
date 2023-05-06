@@ -139,7 +139,7 @@ def calculate_ap(result_stat, iou):
     return ap, mrec, mprec
 
 
-def eval_final_results(result_stat, save_path, noise_level=None, avg_time_delay=0.0, avg_sample_interval=0.0, avg_time_var=0.0, note='', dataset='o'):
+def eval_final_results(result_stat, save_path, noise_level=None, avg_time_delay=-1.0, avg_sample_interval=0.0, avg_time_var=0.0, note='', dataset='o'):
     dump_dict = {}
 
     ap_30, mrec_30, mpre_30 = calculate_ap(result_stat, 0.30)
@@ -170,7 +170,7 @@ def eval_final_results(result_stat, save_path, noise_level=None, avg_time_delay=
           'The Average Precision at IOU 0.7 is %.5f' % (ap_30, ap_50, ap_70))
 
     print('=== Avg Time Delay %.2f ==='
-          '=== Avg Sample Interval %.2f ===' 
-          '=== Avg Time Var %.2f ==='% (avg_time_delay, avg_sample_interval, avg_time_var))
+          '=== Avg Sample Interval %.2f ==='
+          '=== Avg Time Var %.2f ==='% (avg_time_delay, avg_sample_interval, avg_time_var) )
 
     return ap_30, ap_50, ap_70

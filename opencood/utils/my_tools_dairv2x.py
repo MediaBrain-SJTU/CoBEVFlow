@@ -169,11 +169,11 @@ if __name__ == "__main__":
     # create_small_dataset(split_name='train')
 
     root_dirs = "/remote-home/share/sizhewei/logs"
-    note = 'major_irv2v'
+    note = 'major_dairv2x'
     save_path = f"./opencood/result_{note}.jpg"
     title = "Average Precision curves of different methods on the IRV2V dataset at different average time intervals."
     
-    split_list = ['late', 'v2vnet', 'v2xvit', 'where2comm', 'cobevflow', 'where2comm_syncnet'] #
+    split_list = ['late', 'v2vnet', 'v2xvit', 'where2comm', 'cobevflow']#, 'where2comm_syncnet'] #
     single_split_name = 'single'
 
     num_delay = 15
@@ -192,28 +192,28 @@ if __name__ == "__main__":
         delays = []
         if split_name == 'late':
             method_name = 'Late Fusion'
-            file_name = 'opv2v_late_fusion'
-            eval_name = 'late_delay'
+            file_name = 'dairv2x_late_fusion_yflu'
+            eval_name = 'late'
         elif split_name == 'v2vnet':
             method_name = 'V2VNet'
-            file_name = 'opv2v_v2vnet_32ch'
-            eval_name = 'v2vnet_32ch_ep23'
+            file_name = 'dairv2x_v2vnet'
+            eval_name = 'v2vnet'
         elif split_name == 'v2xvit':
             method_name = 'V2X-ViT'
-            file_name = 'opv2v_point_pillar_v2xvit_v1_slren'
+            file_name = 'dairv2x_v2xvit_ylu'
             eval_name = 'v2xvit'
         elif split_name == 'where2comm':
             method_name = 'Where2comm'
-            file_name = 'irv2v_where2comm_max_multiscale_resnet'
-            eval_name = 'where2comm_resnet_multiscale'
+            file_name = 'dairv2x_where2comm_baseline_ylu'
+            eval_name = 'where2comm'
         elif split_name == 'where2comm_syncnet':
             method_name = 'SyncNet'
             file_name = 'irv2v_where2comm_syncnet_wo_tm_test'
-            eval_name = 'syncnet_ir'
+            eval_name = 'syncnet_e8_ir'
         elif split_name == 'cobevflow':
             method_name = 'CoBEVFlow (ours)'
-            file_name = 'opv2v_where2comm_cobevflow_w_dir'
-            eval_name = 'cobevflow_r'
+            file_name = 'dairv2x_where2comm_cobevflow'
+            eval_name = 'cobevflow'
         latest_time_delay = -100.00
         for i in tqdm(np.linspace(0, 0.5, 26)):
             # log_file = os.path.join(split_name, f"eval_{note}_%.1f.yaml" % i)
@@ -227,10 +227,10 @@ if __name__ == "__main__":
             with open(eval_file, "r", encoding="utf-8") as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
             
-            try:
-                unit_time_delay = -data['avg_time_delay']
-            except:
-                unit_time_delay = i*1000
+            # try:
+            #     unit_time_delay = -data['avg_time_delay']
+            # except:
+            unit_time_delay = i*1000
 
             if (unit_time_delay - latest_time_delay) < 30:
                 continue
@@ -246,7 +246,6 @@ if __name__ == "__main__":
 
         if len(ap_list) == 0:
             continue
-
         ap_list_np = np.array(ap_list)
         ap_list_np = np.transpose(ap_list_np)
 
@@ -262,7 +261,7 @@ if __name__ == "__main__":
     # for single fusion
     method_name = single_split_name.split('_')[0]
     # eval_file = os.path.join(root_dirs, f'eval_{single_split_name}.yaml')
-    eval_file = '/remote-home/share/sizhewei/logs/opv2v_late_fusion/eval_no_noise_single_delay_0.00.yaml'
+    eval_file = '/remote-home/share/sizhewei/logs/dairv2x_where2comm_baseline_ylu/eval_no_noise_where2comm_no_fusion_0.00_0.yaml' #'/remote-home/share/sizhewei/logs/dairv2x_no_fusion_ylu/eval_no_noise_no_all_0.00.yaml'
     single_color = 'red'
     with open(eval_file, "r", encoding="utf-8") as f:
         data = yaml.load(f, Loader=yaml.FullLoader)
@@ -274,12 +273,12 @@ if __name__ == "__main__":
     # ax30.set_title('The Results for AP@0.3'); ax30.grid(True); 
     # ax30.set_xticks(xaxis); \
     #     ax30.legend(loc = 'lower left')
-    yaxis = np.linspace(0.2, 0.9, 5)
+    yaxis = np.linspace(0.55, 0.85, 7)
     ax50.set_title('The Results for AP@0.5'); ax50.grid(True); 
     ax50.set_xticks(xaxis); ax50.set_yticks(yaxis); 
     ax50.legend(loc = 'lower left')
     
-    yaxis = np.linspace(0.1, 0.9, 5)
+    yaxis = np.linspace(0.4, 0.7, 7)
     ax70.set_title('The Results for AP@0.7'); ax70.grid(True); 
     ax70.set_xticks(xaxis); ax70.set_yticks(yaxis); 
     ax70.legend(loc = 'lower left')

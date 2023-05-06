@@ -133,7 +133,7 @@ def load_saved_model(saved_path, model):
     # model.load_state_dict(ckpt_new, strict=False)
     return initial_epoch, model
 
-def load_saved_model_diff(saved_path, model):
+def load_saved_model_diff(saved_path, model, finetune_flag=False):
     """
     Load saved model, model and checkpoint may not be totally same.
 
@@ -169,6 +169,15 @@ def load_saved_model_diff(saved_path, model):
         print("resuming best validation model at epoch %d" % \
                 eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")))
         trained_model_dict = torch.load(file_list[0] , map_location='cpu')
+
+        ######## finetune header
+        if finetune_flag:
+            finetune_split_name = ['cls_head.weight', 'cls_head.bias', 'reg_head.weight', 'reg_head.bias']
+            for k in finetune_split_name:
+                trained_model_dict.update({
+                    'fused_'+k: trained_model_dict[k]})
+        #############################
+
         diff_keys = {k:v for k, v in trained_model_dict.items() if k not in model.state_dict()}
         if diff_keys:
             print(f"!!! Trained model has keys: {diff_keys.keys()}, \

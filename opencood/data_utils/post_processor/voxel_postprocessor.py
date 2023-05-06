@@ -275,7 +275,7 @@ class VoxelPostprocessor(BasePostprocessor):
     Added by Sizhewei @ 2023-04-15
     Generate box results on each cav's past_0 time
     """
-    def single_post_process(self, psm_single, rm_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, num_sweeps=2):
+    def single_post_process(self, m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, num_sweeps=2):
         """
         Process the outputs of the model to 2D/3D bounding box.
         Step1: convert each cav's output to bounding box format
@@ -310,6 +310,14 @@ class VoxelPostprocessor(BasePostprocessor):
         }
         """
         self.k = num_sweeps
+        
+        psm_single = m_single['psm_single']
+        rm_single = m_single['rm_single']
+
+        use_dir_flag = False
+        if 'dm_single' in m_single.keys():
+            use_dir_flag = True
+            dm_single = m_single['dm_single']
 
         box_results = OrderedDict()
         # for cav_id, cav_content in data_dict.items():
@@ -338,6 +346,11 @@ class VoxelPostprocessor(BasePostprocessor):
 
         # during validation/testing, the batch size should be 1
         # assert batch_box3d.shape[0] == 1
+
+        if use_dir_flag:
+            dir_offset = self.params['dir_args']['dir_offset']
+            num_bins = self.params['dir_args']['num_bins']
+            dm = dm_single # [N, H, W, 4]
         
         for i in range(self.k):  # 遍历所有的时间戳
             box_results[i] = OrderedDict()
@@ -345,6 +358,21 @@ class VoxelPostprocessor(BasePostprocessor):
             boxes3d = torch.masked_select(batch_box3d[i],
                                         mask_reg[i]).view(-1, 7)
             scores = torch.masked_select(prob[i], mask[i])
+
+            ########### adding dir classifier
+            if use_dir_flag and len(boxes3d)!=0:
+                dir_cls_preds = dm[i:i+1].permute(0, 2, 3, 1).contiguous().reshape(1, -1, num_bins) # [1, N*H*W*2, 2]
+                dir_cls_preds = dir_cls_preds[mask[i:i+1]]
+                # if rot_gt > 0, then the label is 1, then the regression target is [0, 1]
+                dir_labels = torch.max(dir_cls_preds, dim=-1)[1]  # indices. shape [1, N*H*W*2].  value 0 or 1. If value is 1, then rot_gt > 0p
+                
+                period = (2 * np.pi / num_bins) # pi
+                dir_rot = limit_period(
+                    boxes3d[..., 6] - dir_offset, 0, period
+                ) # 限制在0到pi之间
+                boxes3d[..., 6] = dir_rot + dir_offset + period * dir_labels.to(dir_cls_preds.dtype) # 转化0.25pi到2.5pi
+                boxes3d[..., 6] = limit_period(boxes3d[..., 6], 0.5, 2 * np.pi) # limit to [-pi, pi]
+            ###########################################
 
             # convert output to bounding box
             if len(boxes3d) != 0:
@@ -485,8 +513,6 @@ class VoxelPostprocessor(BasePostprocessor):
             if 'dm' in output_dict[cav_id].keys() and len(boxes3d) !=0:
                 dir_offset = self.params['dir_args']['dir_offset']
                 num_bins = self.params['dir_args']['num_bins']
-
-
                 dm  = output_dict[cav_id]['dm'] # [N, H, W, 4]
                 dir_cls_preds = dm.permute(0, 2, 3, 1).contiguous().reshape(1, -1, num_bins) # [1, N*H*W*2, 2]
                 dir_cls_preds = dir_cls_preds[mask]

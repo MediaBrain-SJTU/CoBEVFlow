@@ -88,6 +88,13 @@ class PointPillarWhere2commAttn(nn.Module):
             self.reg_head = nn.Conv2d(128 * 3, 7 * args['anchor_number'],
                                     kernel_size=1)
 
+        if 'dir_args' in args.keys():
+            self.use_dir = True
+            self.dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
+                                  kernel_size=1) # BIN_NUM = 2， # 384
+        else:
+            self.use_dir = False
+
         if args['backbone_fix']:
             self.backbone_fix()
 
@@ -171,6 +178,8 @@ class PointPillarWhere2commAttn(nn.Module):
         # [B, 256, 50, 176]
         psm_single = self.cls_head(spatial_features_2d)
         rm_single = self.reg_head(spatial_features_2d)
+        if self.use_dir:
+            dm_single = self.dir_head(spatial_features_2d)
 
         # rain attention:
         if self.multi_scale:
@@ -247,6 +256,10 @@ class PointPillarWhere2commAttn(nn.Module):
         # fuse 之后的 feature (ego)
         output_dict = {'psm': psm,
                        'rm': rm}
+        
+        if self.use_dir:
+            dm = self.dir_head(fused_feature)
+            output_dict.update({'dm': dm})
 
         if self.compensation:
             if self.single_supervise:
@@ -266,6 +279,8 @@ class PointPillarWhere2commAttn(nn.Module):
                        'rm_single': rm_single,
                        'comm_rate': communication_rates
                        })
+        if self.use_dir:
+            output_dict.update({'dm_single': dm_single})
         
         output_dict.update(result_dict) 
         

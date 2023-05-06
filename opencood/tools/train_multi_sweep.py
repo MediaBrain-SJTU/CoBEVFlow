@@ -92,7 +92,7 @@ def main():
     if 'is_finetune' in hypes:
         finetune_flag = hypes['is_finetune']
     if finetune_flag:
-        assert hypes['is_generate_gt_flow'] and hypes['only_tune_header']
+        # assert hypes['is_generate_gt_flow'] and hypes['only_tune_header']
         finetune_time_interval = int(hypes['binomial_n'] * hypes['binomial_p'])
         print('### Finetune mode, only tune header. ###')
 
@@ -176,7 +176,7 @@ def main():
     # if we want to train from last checkpoint.
     if opt.model_dir:
         saved_path = opt.model_dir
-        init_epoch, model = train_utils.load_saved_model_diff(saved_path, model)
+        init_epoch, model = train_utils.load_saved_model_diff(saved_path, model, finetune_flag)
         if finetune_flag:
             init_epoch = 0 # if finetune, we set the init_epoch to 10
         scheduler = train_utils.setup_lr_schedular(hypes, optimizer, init_epoch=init_epoch)
@@ -251,6 +251,7 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
+            continue # TODO: delete this line
             if batch_data is None:
                 continue
             # start_time = time.time()

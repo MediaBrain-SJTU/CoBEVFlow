@@ -129,7 +129,7 @@ def box_flow_update(box_results, batch_id=0):
 
     return updated_box
 
-def inference_intermediate_fusion_flow_module(batch_data, model, dataset):
+def inference_intermediate_fusion_flow_module(batch_data, model, dataset, viz_bbx_flag=False):
     """
     Model inference for flow module
     利用box预测结果生成flow 根据该flow更新feature
@@ -154,6 +154,12 @@ def inference_intermediate_fusion_flow_module(batch_data, model, dataset):
     pred_box_tensor, pred_score, gt_box_tensor = \
         dataset.post_process(batch_data,
                              output_dict)
+    
+    if viz_bbx_flag:
+        single_detection_bbx = output_dict['ego']['single_detection_bbx']
+        matched_idx_list = output_dict['ego']['matched_idx_list']
+        compensated_results_list = output_dict['ego']['compensated_results_list']
+        return pred_box_tensor, pred_score, gt_box_tensor, single_detection_bbx, matched_idx_list, compensated_results_list
 
     return pred_box_tensor, pred_score, gt_box_tensor
 

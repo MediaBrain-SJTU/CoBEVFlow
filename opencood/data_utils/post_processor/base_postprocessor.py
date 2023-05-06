@@ -105,6 +105,36 @@ class BasePostprocessor(object):
 
         return gt_box3d_tensor
     
+    def generate_single_bbx(self, cav_content):
+        gt_box3d_list = []
+        # used to avoid repetitive bounding box
+        object_id_list = []
+
+        object_bbx_center = cav_content['object_bbx_center']
+        object_ids = cav_content['object_ids']
+
+        # convert center to corner
+        object_bbx_corner = \
+            box_utils.boxes_to_corners_3d(object_bbx_center,
+                                            self.params['order'])
+
+        gt_box3d_list.append(projected_object_bbx_corner)
+        # append the corresponding ids
+        object_id_list += object_ids
+
+        # gt bbx 3d
+        gt_box3d_list = torch.vstack(gt_box3d_list)
+        # some of the bbx may be repetitive, use the id list to filter
+        gt_box3d_selected_indices = \
+            [object_id_list.index(x) for x in set(object_id_list)]
+        gt_box3d_tensor = gt_box3d_list[gt_box3d_selected_indices]
+
+        # filter the gt_box to make sure all bbx are in the range
+        mask = \
+            box_utils.get_mask_for_boxes_within_range_torch(gt_box3d_tensor, self.params['gt_range'])
+        gt_box3d_tensor = gt_box3d_tensor[mask, :, :]
+        return 0
+
     def generate_gt_bbx(self, data_dict):
         """
         The base postprocessor will generate 3d groundtruth bounding box.
@@ -422,7 +452,7 @@ class BasePostprocessor(object):
 
 
     def generate_object_center_dairv2x_single(self,
-                               cav_contents):
+                               cav_contents, suffix=""):
         """
         Retrieve all objects in a format of (n, 7), where 7 represents
         x, y, z, l, w, h, yaw or x, y, z, h, w, l, yaw.
@@ -448,7 +478,7 @@ class BasePostprocessor(object):
         # tmp_object_dict = {}
         tmp_object_list = []
         cav_content = cav_contents[0]
-        tmp_object_list = cav_content['params']['vehicles'] 
+        tmp_object_list = cav_content['params'][f'vehicles{suffix}'] 
 
         output_dict = {}
         filter_range = self.params['anchor_args']['cav_lidar_range']

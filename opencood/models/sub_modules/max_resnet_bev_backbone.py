@@ -2,7 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from opencood.models.sub_modules.resblock import ResNetModified, BasicBlock, Bottleneck
+# from opencood.models.sub_modules.resblock import ResNetModified, BasicBlock, Bottleneck
+from opencood.models.sub_modules.resblock2 import ResNetModified, BasicBlock, Bottleneck
 from opencood.models.sub_modules.auto_encoder import AutoEncoder
 from opencood.models.sub_modules.torch_transformation_utils import warp_affine_simple
 DEBUG = False

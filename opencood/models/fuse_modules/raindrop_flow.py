@@ -632,7 +632,7 @@ class raindrop_fuse(nn.Module):
         # 2.1 generate flow, 在同一个坐标系内，计算每个cav的flow
         # 2.2 compensation
         # x: (BxNxK, C, H, W) -> (BxN, C, H, W)
-        if self.design == 0:
+        if self.design == 0 or self.design == 5:
             updated_features = self.update_features_boxflow(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
         elif self.design == 1:
             updated_features, flow_recon_loss = self.update_features_boxflow_design_1(x, pairwise_t_matrix, record_len, box_flow, reserved_mask, flow_gt)
@@ -764,7 +764,7 @@ class raindrop_fuse(nn.Module):
             x_fuse = torch.stack(x_fuse)
 
             # self.fuse_modsules(x_fuse, record_len)
-        if self.design == 0:
+        if self.design == 0 or self.design == 5:
             return x_fuse, communication_rates, {}
         elif self.design == 1:
             return x_fuse, communication_rates, {}, flow_recon_loss

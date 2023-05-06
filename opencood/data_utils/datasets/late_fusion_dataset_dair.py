@@ -8,6 +8,7 @@ import random
 import math
 from collections import OrderedDict
 import os
+import os.path as osp
 import opencood.data_utils.post_processor as post_processor
 import numpy as np
 import torch
@@ -30,6 +31,40 @@ def load_json(path):
     with open(path, mode="r") as f:
         data = json.load(f)
     return data
+
+def build_idx_to_info(data):
+    idx2info = {}
+    for elem in data:
+        if elem["pointcloud_path"] == "":
+            continue
+        idx = elem["pointcloud_path"].split("/")[-1].replace(".pcd", "")
+        idx2info[idx] = elem
+    return idx2info
+
+def build_idx_to_co_info(data):
+    idx2info = {}
+    for elem in data:
+        if elem["vehicle_pointcloud_path"] == "":
+            continue
+        idx = elem["vehicle_pointcloud_path"].split("/")[-1].replace(".pcd", "")
+        idx2info[idx] = elem
+    return idx2info
+
+def build_inf_fid_to_veh_fid(data):
+    inf_fid2veh_fid = {}
+    for elem in data:
+        veh_fid = elem["vehicle_pointcloud_path"].split("/")[-1].rstrip('.pcd')
+        inf_fid = elem["infrastructure_pointcloud_path"].split("/")[-1].rstrip('.pcd')
+        inf_fid2veh_fid[inf_fid] = veh_fid
+    return inf_fid2veh_fid
+
+def id_to_str(id, digits=6):
+    result = ""
+    for i in range(digits):
+        result = str(id % 10) + result
+        id //= 10
+    return result
+
 class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
     def __init__(self, params, visualize, train=True):
         self.params = params
@@ -38,6 +73,29 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
         self.data_augmentor = DataAugmentor(params['data_augment'],
                                             train)
         self.max_cav = 2
+
+        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
+            self.k = params['num_sweep_frames']
+        else:
+            self.k = 1
+
+        if 'binomial_n' in params:
+            self.binomial_n = params['binomial_n']
+        else:
+            self.binomial_n = 10
+
+        if 'binomial_p' in params:
+            self.binomial_p = params['binomial_p']
+        else:
+            self.binomial_p = 0
+
+        # 控制是否需要生成GT flow
+        self.is_generate_gt_flow = False
+        if 'is_generate_gt_flow' in params and params['is_generate_gt_flow']:
+            self.is_generate_gt_flow = True
+
+        self.viz_bbx_flag = False
+
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
         # projected instead.
@@ -72,16 +130,57 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
 
         self.root_dir = params['data_dir']
 
+        self.inf_idx2info = build_idx_to_info(
+            load_json(osp.join(self.root_dir, "infrastructure-side/data_info.json"))
+        )
+        self.co_idx2info = build_idx_to_co_info(
+            load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
+        )
+        self.co_data = self.co_idx2info
+
+        self.inf_fid2veh_fid = build_inf_fid_to_veh_fid(load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
+        )
+
         self.split_info = load_json(split_dir)
-        co_datainfo = load_json(os.path.join(self.root_dir, 'cooperative/data_info.json'))
-        self.co_data = OrderedDict()
-        for frame_info in co_datainfo:
-            veh_frame_id = frame_info['vehicle_image_path'].split("/")[-1].replace(".jpg", "")
-            self.co_data[veh_frame_id] = frame_info
+        self.data = []
+        for veh_idx in self.split_info:
+            if self.is_valid_id(veh_idx):
+                self.data.append(veh_idx)
+
 
     def __len__(self):
-        return len(self.split_info)
+        return len(self.data)
+        # return len(self.split_info)
 
+    def is_valid_id(self, veh_frame_id):
+        """
+        Written by sizhewei @ 2022/10/05
+        Given veh_frame_id, determine whether there is a corresponding inf_frame that meets the k delay requirement.
+
+        Parameters
+        ----------
+        veh_frame_id : 05d
+            Vehicle frame id
+
+        Returns
+        -------
+        bool valud
+            True means there is a corresponding road-side frame.
+        """
+        # print('veh_frame_id: ',veh_frame_id,'\n')
+        frame_info = {}
+        
+        frame_info = self.co_idx2info[veh_frame_id]
+        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        cur_inf_info = self.inf_idx2info[inf_frame_id]
+        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
+            return False
+        for i in range(self.binomial_n * self.k):
+            delay_id = id_to_str(int(inf_frame_id) - i) 
+            if delay_id not in self.inf_fid2veh_fid.keys():
+                return False
+
+        return True
     def retrieve_base_data(self, idx):
         """
         Given the index, return the corresponding data.
@@ -97,7 +196,8 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
             The dictionary contains loaded yaml params and lidar data for
             each cav.
         """
-        veh_frame_id = self.split_info[idx]
+        # veh_frame_id = self.split_info[idx]
+        veh_frame_id = self.data[idx]
         frame_info = self.co_data[veh_frame_id]
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()

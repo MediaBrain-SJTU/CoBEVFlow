@@ -392,7 +392,7 @@ class Matcher(nn.Module):
     while the others are un-matched (and thus treated as non-objects).
     """
 
-    def __init__(self, cost_dist: float = 1, cost_giou: float = 1, thre: float = 20):
+    def __init__(self, fusion, cost_dist: float = 1, cost_giou: float = 1, thre: float = 20):
         """Creates the matcher
         Params:
             cost_class: This is the relative weight of the classification error in the matching cost
@@ -404,18 +404,24 @@ class Matcher(nn.Module):
         self.cost_giou = cost_giou
         self.thre = thre
 
-        m1, m2 = make_model(4,2)
-        self.compensate_motion = m1
+        self.fusion = fusion
+        if fusion=='flow':
+            m1, m2 = make_model(4,2)
+            self.compensate_motion = m1
 
     @torch.no_grad()
-    def forward(self, input_dict, fusion='box', feature=None, shape_list=None, batch_id=0):
-        if fusion=='box':
+    def forward(self, input_dict, feature=None, shape_list=None, batch_id=0, viz_flag=False):
+        self.viz_flag = viz_flag
+        if self.fusion=='box':
             return self.forward_box(input_dict, batch_id)
-        elif fusion=='feature':
+        elif self.fusion=='feature':
             return self.forward_feature(input_dict, feature)
-        elif fusion=='flow':
+        # elif self.fusion=='flow':
+        #     return self.forward_flow_multi_frames(input_dict, shape_list)
+        elif self.fusion=='linear':
             return self.forward_flow(input_dict, shape_list)
-            # return self.forward_flow_multi_frames(input_dict, shape_list)
+        elif self.fusion=='flow': # TODO: flow_dir
+            return self.forward_flow_dir(input_dict, shape_list)
         else:
             print("Attention, fusion method must be in box or feature!")
 
@@ -675,6 +681,9 @@ class Matcher(nn.Module):
         """
         flow_map_list = []
         reserved_mask = []
+        if self.viz_flag:
+            matched_idx_list = []
+            compensated_results_list = []
         for cav, cav_content in input_dict.items():
             if cav == 0:
                 # ego do not need warp
@@ -695,8 +704,12 @@ class Matcher(nn.Module):
                 center_points_past2 = coord_past2['pred_box_center_tensor'][:,:2]
                 center_points_past3 = coord_past3['pred_box_center_tensor'][:,:2]
 
+                self.thre_post_process = 10
+
                 # past1 and past2 match
                 cost_mat_center_a = torch.cdist(center_points_past2, center_points_past1) # [num_cav_past2,num_cav_past1]
+                # original_cost_mat_center_a = cost_mat_center_a.clone()
+                # cost_mat_center_a[cost_mat_center_a > self.thre_post_process] = 1000
 
                 cost_mat_center_drop_2_a = torch.sum(torch.where(cost_mat_center_a > self.thre, 1, 0), dim=1)
                 dist_valid_past2_a = torch.where(cost_mat_center_drop_2_a < center_points_past1.shape[0])
@@ -720,10 +733,16 @@ class Matcher(nn.Module):
                     mask = torch.ones(1, C, H, W).to(shape_list) # TODO: rethink ones or zeros
                     flow_map_list.append(basic_warp_mat)
                     reserved_mask.append(mask)
+                    if self.viz_flag:
+                        matched_idx_list.append(torch.stack([torch.tensor([]), torch.tensor([])], dim=1).to(shape_list.device))
+                        compensated_results_list.append(torch.zeros(0, 8, 3).to(shape_list.device))
                     continue
 
                 # past2 and past3 match
                 cost_mat_center_b = torch.cdist(center_points_past3, center_points_past2) # [num_cav_past3,num_cav_past2]
+
+                # original_cost_mat_center_b = cost_mat_center_b.clone()
+                # cost_mat_center_b[cost_mat_center_b > self.thre_post_process] = 1000
 
                 cost_mat_center_drop_3 = torch.sum(torch.where(cost_mat_center_b > self.thre, 1, 0), dim=1)
                 dist_valid_past3 = torch.where(cost_mat_center_drop_3 < center_points_past2.shape[0])
@@ -762,12 +781,18 @@ class Matcher(nn.Module):
                     flow_map, mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
                     flow_map_list.append(flow_map)
                     reserved_mask.append(mask)
+                    if self.viz_flag:
+                        matched_idx_list.append(torch.stack([past1_ids, past2_ids_a], dim=1))
+                        selected_box_3dcorner_compensated = selected_box_3dcorner_past0.clone()
+                        selected_box_3dcorner_compensated[:, :, :-1] += flow.unsqueeze(1).repeat(1, 4, 1) 
+                        compensated_results_list.append(selected_box_3dcorner_compensated)
                     continue
 
                 # 三帧匹配结果输入预测模块
                 matched_past1 = center_points_past1[past1_ids[a_idx]].unsqueeze(0)
                 matched_past2 = center_points_past2[past2_ids_a[a_idx]].unsqueeze(0)
                 matched_past3 = center_points_past3[past3_ids[b_idx]].unsqueeze(0)
+
                 obj_coords = torch.cat([matched_past3, matched_past2, matched_past1], dim=0)
                 obj_coords = obj_coords.permute(1, 0, 2) # (N, k, 2)
 
@@ -803,6 +828,11 @@ class Matcher(nn.Module):
                 selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids[a_idx],]
                 selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
 
+                if self.viz_flag and not(len(a_idx) < len(past2_ids_a)):
+                    unit_matched_list = torch.stack([past1_ids[a_idx], past2_ids_a[a_idx], past3_ids[b_idx]], dim=1) # (N_obj, 3)
+                    selected_box_3dcorner_compensated = selected_box_3dcorner_past0.clone()
+                    selected_box_3dcorner_compensated[:, :, :-1] += flow.unsqueeze(1).repeat(1, 4, 1) 
+
                 # 两帧匹配成功 but三帧匹配失败 将两帧的结果进行插值 com 表示补集
                 if len(a_idx) < len(past2_ids_a): 
                     com_past1_ids = [elem.item() for id, elem in enumerate(past1_ids) if id not in a_idx]
@@ -821,6 +851,21 @@ class Matcher(nn.Module):
                     
                     flow = torch.cat([flow, com_flow], dim=0)
                     selected_box_3dcorner_past0 = torch.cat([selected_box_3dcorner_past0, com_selected_box_3dcorner_past0], dim=0)
+
+                    # matched: 
+                    # past1: past1_ids[a_idx] + com_past1_ids
+                    # past2: past2_ids_a[a_idx] + com_past2_ids
+                    # past3: past3_ids[b_idx]
+                    if self.viz_flag:
+                        tmp_past_1 = torch.cat([past1_ids[a_idx], torch.tensor(com_past1_ids).to(past1_ids)], dim=0)
+                        tmp_past_2 = torch.cat([past2_ids_a[a_idx], torch.tensor(com_past2_ids).to(past1_ids)], dim=0)
+                        unit_matched_list = torch.stack([tmp_past_1, tmp_past_2], dim=1)  # (N_obj, 2)
+                        selected_box_3dcorner_compensated = selected_box_3dcorner_past0.clone()
+                        selected_box_3dcorner_compensated[:, :, :-1] += flow.unsqueeze(1).repeat(1, 4, 1) 
+
+                if self.viz_flag:
+                    matched_idx_list.append(unit_matched_list)
+                    compensated_results_list.append(selected_box_3dcorner_compensated)
                 
                 # debug use
                 debug_flag = False
@@ -839,25 +884,11 @@ class Matcher(nn.Module):
         
         final_flow_map = torch.concat(flow_map_list, dim=0) # [N_b, H, W, 2]
         reserved_mask = torch.concat(reserved_mask, dim=0)  # [N_b, C, H, W]
+        
+        if self.viz_flag:
+            return final_flow_map, reserved_mask, matched_idx_list, compensated_results_list
+        
         return final_flow_map, reserved_mask
-        '''
-                updated_spatial_features_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow, scale=1.25)
-                updated_spatial_features = self.feature_warp(features_dict[cav]['spatial_features'][0], selected_box_3dcorner_past0, flow, scale=2.5)
-
-                # debug use
-                if debug_flag and flow.shape[0] != 0:
-                    torch.save(updated_spatial_features_2d, viz_save_path+'/updated_feature.pt')
-                ############
-
-            features_dict[cav].update({
-                'updated_spatial_features_2d': updated_spatial_features_2d
-            })
-            features_dict[cav].update({
-                'updated_spatial_features': updated_spatial_features
-            })
-
-        return features_dict
-        '''
 
     def forward_flow(self, input_dict, shape_list):
         """
@@ -900,6 +931,8 @@ class Matcher(nn.Module):
         """
         flow_map_list = []
         reserved_mask = []
+        if self.viz_flag:
+            matched_idx_list = []
         for cav, cav_content in input_dict.items():
             if cav == 0:
                 # ego do not need warp
@@ -918,6 +951,10 @@ class Matcher(nn.Module):
 
                 cost_mat_center = torch.cdist(center_points_past2, center_points_past1) # [num_cav_past2,num_cav_past1]
 
+                self.thre_post_process = 10
+                original_cost_mat_center = cost_mat_center.clone()
+                cost_mat_center[cost_mat_center > self.thre_post_process] = 1000
+
                 cost_mat_center_drop_2 = torch.sum(torch.where(cost_mat_center > self.thre, 1, 0), dim=1)
                 dist_valid_past2 = torch.where(cost_mat_center_drop_2 < center_points_past1.shape[0])
                 cost_mat_center_drop_1 = torch.sum(torch.where(cost_mat_center > self.thre, 1, 0), dim=0)
@@ -932,11 +969,19 @@ class Matcher(nn.Module):
                 
                 past2_ids = dist_valid_past2[0][past2_ids]
                 past1_ids = dist_valid_past1[0][past1_ids]
-                # output_dict_past.update({car:past_ids})
-                # output_dict_current.update({car:current_ids})
+                
+                ### a trick
+                matched_cost = original_cost_mat_center[past2_ids, past1_ids]
+                valid_mat_idx = torch.where(matched_cost < self.thre_post_process)
+                past2_ids = past2_ids[valid_mat_idx[0]]
+                past1_ids = past1_ids[valid_mat_idx[0]]
+                ####################
 
                 matched_past2 = center_points_past2[past2_ids]
                 matched_past1 = center_points_past1[past1_ids]
+
+                if self.viz_flag:
+                    matched_idx_list.append(torch.stack([past1_ids, past2_ids], dim=1))
 
                 time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
                 if time_length == 0:
@@ -945,7 +990,7 @@ class Matcher(nn.Module):
 
                 flow = flow*(0-cav_content['past_k_time_diff'][0])
                 selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
-                selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
+                selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl') # TODO: box order should be a parameter
                 
                 # debug use
                 debug_flag = False
@@ -965,6 +1010,190 @@ class Matcher(nn.Module):
         
         final_flow_map = torch.concat(flow_map_list, dim=0) # [N_b, H, W, 2]
         reserved_mask = torch.concat(reserved_mask, dim=0)  # [N_b, C, H, W]
+
+        if self.viz_flag:
+            return final_flow_map, reserved_mask, matched_idx_list
+        return final_flow_map, reserved_mask
+        '''
+                updated_spatial_features_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow, scale=1.25)
+                updated_spatial_features = self.feature_warp(features_dict[cav]['spatial_features'][0], selected_box_3dcorner_past0, flow, scale=2.5)
+
+                # debug use
+                if debug_flag and flow.shape[0] != 0:
+                    torch.save(updated_spatial_features_2d, viz_save_path+'/updated_feature.pt')
+                ############
+
+            features_dict[cav].update({
+                'updated_spatial_features_2d': updated_spatial_features_2d
+            })
+            features_dict[cav].update({
+                'updated_spatial_features': updated_spatial_features
+            })
+
+        return features_dict
+        '''
+
+    def forward_flow_dir(self, input_dict, shape_list):
+        """
+        Parameters:
+        -----------
+        input_dict : The dictionary containing the box detections on each frame of each cav.
+            dict : { 
+                cav_idx : {
+                    'past_k_time_diff':
+                    [0], [1], ..., [k-1] : {
+                        pred_box_3dcorner_tensor: The prediction bounding box tensor after NMS. n, 8, 3
+                        pred_box_center_tensor : n, 7
+                        scores: (n, )
+                    }
+                }
+            }
+        features_dict : The dictionary containing the output of the model.
+            dict : {
+                'ego' / cav_id : {
+                    'spatial_features_2d'
+                    'spatial_features'
+                    'psm'
+                    'rm'
+                }
+            }
+
+        Returns:
+        --------
+        features_dict :
+            dict : {
+                'ego' / cav_id : {
+                    'spatial_features_2d'
+                    'spatial_features'
+                    'psm'
+                    'rm'
+                    'updated_spatial_features_2d'
+                    'updated_spatial_features'
+                }
+            }
+        """
+        flow_map_list = []
+        reserved_mask = []
+        if self.viz_flag:
+            matched_idx_list = []
+            compensated_results_list = []
+        for cav, cav_content in input_dict.items():
+            if cav == 0:
+                # ego do not need warp
+                C, H, W = shape_list
+                basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
+                basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=False).to(shape_list.device)
+                mask = torch.ones(1, C, H, W).to(shape_list)
+                flow_map_list.append(basic_warp_mat)
+                reserved_mask.append(mask)
+            else:
+                coord_past1 = cav_content[0]
+                coord_past2 = cav_content[1]
+
+                center_points_past1 = coord_past1['pred_box_center_tensor'][:,:2]
+                center_points_past2 = coord_past2['pred_box_center_tensor'][:,:2]
+
+                cost_mat_center = torch.zeros((center_points_past2.shape[0], center_points_past1.shape[0])).to(center_points_past1.device)
+
+                center_points_past1_repeat = center_points_past1.unsqueeze(0).repeat(center_points_past2.shape[0], 1, 1)
+                center_points_past2_repeat = center_points_past2.unsqueeze(1).repeat(1, center_points_past1.shape[0], 1)
+
+                delta_mat = center_points_past1_repeat - center_points_past2_repeat
+
+                angle_mat = torch.atan2(delta_mat[:,:,1], delta_mat[:,:,0]) # [num_cav_past2,num_cav_past1]
+                visible_mat = torch.where((torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) < 0.785) | (torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) > 5.495), 1, 0) # [num_cav_past2,num_cav_past1]
+
+                cost_mat_center = torch.cdist(center_points_past2, center_points_past1) # [num_cav_past2,num_cav_past1]
+
+                visible_mat = torch.where(cost_mat_center<0.5, 1, visible_mat)
+
+                tmp_thre = torch.tensor(1000.).to(torch.float32).to(visible_mat.device)
+                cost_mat_center = torch.where(visible_mat==1, cost_mat_center, tmp_thre)
+
+                if cost_mat_center.shape[1] == 0 or cost_mat_center.shape[0] == 0:
+                    C, H, W = shape_list
+                    basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
+                    basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=False).to(shape_list.device)
+                    mask = torch.ones(1, C, H, W).to(shape_list)
+                    flow_map_list.append(basic_warp_mat)
+                    reserved_mask.append(mask)
+                    if self.viz_flag:
+                        matched_idx_list.append(torch.stack([torch.tensor([]), torch.tensor([])], dim=1).to(shape_list.device))
+                        compensated_results_list.append(torch.zeros(0, 8, 3).to(shape_list.device))
+                    continue
+
+                match = torch.min(cost_mat_center, dim=1)
+                match_to_keep = torch.where(match[0] < 5)
+
+                past2_ids = match_to_keep[0]
+                past1_ids = match[1][match_to_keep[0]]
+
+                # ##############################################
+                # self.thre_post_process = 10
+                # original_cost_mat_center = cost_mat_center.clone()
+                # cost_mat_center[cost_mat_center > self.thre_post_process] = 1000
+
+                # cost_mat_center_drop_2 = torch.sum(torch.where(cost_mat_center > self.thre, 1, 0), dim=1)
+                # dist_valid_past2 = torch.where(cost_mat_center_drop_2 < center_points_past1.shape[0])
+                # cost_mat_center_drop_1 = torch.sum(torch.where(cost_mat_center > self.thre, 1, 0), dim=0)
+                # dist_valid_past1 = torch.where(cost_mat_center_drop_1 < center_points_past2.shape[0])
+
+                # cost_mat_center = cost_mat_center[dist_valid_past2[0], :]
+                # cost_mat_center = cost_mat_center[:, dist_valid_past1[0]]
+                
+                # # cost_mat_iou = get_ious()
+                # cost_mat = cost_mat_center
+                # past2_ids, past1_ids = linear_sum_assignment(cost_mat.cpu())
+                
+                # past2_ids = dist_valid_past2[0][past2_ids]
+                # past1_ids = dist_valid_past1[0][past1_ids]
+                
+                # ### a trick
+                # matched_cost = original_cost_mat_center[past2_ids, past1_ids]
+                # valid_mat_idx = torch.where(matched_cost < self.thre_post_process)
+                # past2_ids = past2_ids[valid_mat_idx[0]]
+                # past1_ids = past1_ids[valid_mat_idx[0]]
+                # ####################
+
+                matched_past2 = center_points_past2[past2_ids]
+                matched_past1 = center_points_past1[past1_ids]
+
+                time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
+                if time_length == 0:
+                    time_length = 1
+                flow = (matched_past1 - matched_past2) / time_length
+
+                flow = flow*(0-cav_content['past_k_time_diff'][0])
+                selected_box_3dcenter_past0 = coord_past1['pred_box_center_tensor'][past1_ids,]
+                selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl') # TODO: box order should be a parameter
+
+                if self.viz_flag:
+                    matched_idx_list.append(torch.stack([past1_ids, past2_ids], dim=1))
+                    selected_box_3dcorner_compensated = selected_box_3dcorner_past0.clone()
+                    selected_box_3dcorner_compensated[:, :, :-1] += flow.unsqueeze(1).repeat(1, 4, 1) 
+                    compensated_results_list.append(selected_box_3dcorner_compensated)
+                
+                # debug use
+                debug_flag = False
+                if debug_flag and flow.shape[0] != 0:
+                    viz_save_path = '/DB/data/sizhewei/logs/where2comm_max_multiscale_resnet_32ch/vis_debug'
+                    torch.save(features_dict[cav]['spatial_features_2d'][0], viz_save_path+'/features_2d.pt')
+                    torch.save(features_dict[cav]['spatial_features'][0], viz_save_path+'/features.pt')
+                    torch.save(selected_box_3dcorner_past0, viz_save_path+'/bbx_list.pt')
+                    torch.save(flow, viz_save_path+'/flow.pt')
+                    print(f"===saved, max flow is {flow.max()}===")
+                ############
+                
+                flow_map, mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
+                flow_map_list.append(flow_map)
+                reserved_mask.append(mask)
+                continue
+        
+        final_flow_map = torch.concat(flow_map_list, dim=0) # [N_b, H, W, 2]
+        reserved_mask = torch.concat(reserved_mask, dim=0)  # [N_b, C, H, W]
+
+        if self.viz_flag:
+            return final_flow_map, reserved_mask, matched_idx_list, compensated_results_list
         return final_flow_map, reserved_mask
         '''
                 updated_spatial_features_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow, scale=1.25)

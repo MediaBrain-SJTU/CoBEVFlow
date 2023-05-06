@@ -17,7 +17,6 @@ import json
 import opencood.data_utils.datasets
 import opencood.data_utils.post_processor as post_processor
 from opencood.utils import box_utils
-from scipy import stats
 
 from opencood.data_utils.datasets import intermediate_fusion_dataset
 from opencood.data_utils.augmentor.data_augmentor import DataAugmentor
@@ -57,14 +56,6 @@ def build_idx_to_co_info(data):
         idx2info[idx] = elem
     return idx2info
 
-def build_inf_fid_to_veh_fid(data):
-    inf_fid2veh_fid = {}
-    for elem in data:
-        veh_fid = elem["vehicle_pointcloud_path"].split("/")[-1].rstrip('.pcd')
-        inf_fid = elem["infrastructure_pointcloud_path"].split("/")[-1].rstrip('.pcd')
-        inf_fid2veh_fid[inf_fid] = veh_fid
-    return inf_fid2veh_fid
-
 def id_to_str(id, digits=6):
     result = ""
     for i in range(digits):
@@ -72,7 +63,7 @@ def id_to_str(id, digits=6):
         id //= 10
     return result
 
-class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.IntermediateFusionDataset):
+class IntermediateFusionDatasetDAIR_outage(intermediate_fusion_dataset.IntermediateFusionDataset):
     """
     Written by sizhewei @ 2022/09/28
     This class is for intermediate fusion where each vehicle transmit the
@@ -86,21 +77,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         self.data_augmentor = DataAugmentor(params['data_augment'],
                                             train)
         self.max_cav = 2
-        
-        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
-            self.k = params['num_sweep_frames']
-        else:
-            self.k = 1
-
-        if 'binomial_n' in params:
-            self.binomial_n = params['binomial_n']
-        else:
-            self.binomial_n = 10
-
-        if 'binomial_p' in params:
-            self.binomial_p = params['binomial_p']
-        else:
-            self.binomial_p = 0
+        self.k = params['num_of_past']
         
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
@@ -149,14 +126,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         else:
             split_dir = params['validate_dir']
 
-        self.root_dir = '/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure' # TODO:
+        self.root_dir = '/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure'
         self.inf_idx2info = build_idx_to_info(
             load_json(osp.join(self.root_dir, "infrastructure-side/data_info.json"))
         )
         self.co_idx2info = build_idx_to_co_info(
             load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
-        )
-        self.inf_fid2veh_fid = build_inf_fid_to_veh_fid(load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
         )
 
         self.data_split = load_json(split_dir)
@@ -164,14 +139,19 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         for veh_idx in self.data_split:
             if self.is_valid_id(veh_idx):
                 self.data.append(veh_idx)
+        if self.train:
+            np.save('./train_list.npy',self.data,allow_pickle=True)
+        else:
+            np.save('./val_list.npy',self.data,allow_pickle=True)
 
-        print("Irregular async dataset with past %d frames and expectation time delay = %d initialized! %d samples totally!" % (self.k, int(self.binomial_n*self.binomial_p), len(self.data)))
-
+        print("ASync dataset with {} time delay initialized! {} samples totally!".format(self.k, len(self.data)))
     def is_valid_id(self, veh_frame_id):
         """
         Written by sizhewei @ 2022/10/05
         Given veh_frame_id, determine whether there is a corresponding inf_frame that meets the k delay requirement.
-
+        Modified by Shunli Ren @ 2022/11/3 
+        judge it according to vehicle id
+        
         Parameters
         ----------
         veh_frame_id : 05d
@@ -185,22 +165,46 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # print('veh_frame_id: ',veh_frame_id,'\n')
         frame_info = {}
         
-        frame_info = self.co_idx2info[veh_frame_id]
-        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
-        cur_inf_info = self.inf_idx2info[inf_frame_id]
-        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
-            return False
-        for i in range(self.binomial_n * self.k):
-            delay_id = id_to_str(int(inf_frame_id) - i) 
-            if delay_id not in self.inf_fid2veh_fid.keys():
+        for i in range(self.k):
+            past_id = id_to_str(int(veh_frame_id) - self.k + i)
+            if past_id not in self.data_split:
                 return False
+        vehicle_idx_0 = id_to_str(int(veh_frame_id) - self.k)
+
+            
+        frame_info = self.co_idx2info[veh_frame_id]
+        frame_info_idx0 = self.co_idx2info[vehicle_idx_0]
+        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        inf_frame_id_idx0 = frame_info_idx0['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        cur_inf_info = self.inf_idx2info[inf_frame_id]
+        if (
+            int(inf_frame_id_idx0) < int(cur_inf_info["batch_start_id"])
+        ):
+            return False
 
         return True
+    
+    def get_vehicle_trans(self, veh_frame_id):
+
+        lidar_to_novatel_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/lidar_to_novatel/'+str(veh_frame_id)+'.json'))
+        novatel_to_world_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/novatel_to_world/'+str(veh_frame_id)+'.json'))
+
+        transformation_matrix = veh_side_rot_and_trans_to_trasnformation_matrix(lidar_to_novatel_json_file,novatel_to_world_json_file)
+        trans = tfm_to_pose(transformation_matrix)
+
+        return trans
+    
+    def get_inf_trans(self, inf_frame_id, system_error_offset):
+        virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
+        transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
+        trans = tfm_to_pose(transformation_matrix1)
+
+        return trans
 
     def retrieve_base_data(self, idx):
         """
         Modified by sizhewei @ 2022/09/28
-        Given the index, return the corresponding async data (time delay expection = sum(B(n, p)) ).
+        Given the index, return the corresponding async data (time delay: self.k).
 
         Parameters
         ----------
@@ -212,35 +216,16 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         data : dict
             The dictionary contains loaded yaml params and lidar data for
             each cav.
-            {
-                [0]  / [1]: {
-                    'ego' : True / False,
-                    'params' : {
-                        'vehicles':
-                        'lidar_pose':
-                    },
-                    'lidar_np' : 
-                    'veh_frame_id' :
-                    'avg_time_delay' : ([1] only)
-                }
-            }
         """
         veh_frame_id = self.data[idx]
         # print('veh_frame_id: ',veh_frame_id,'\n')
-        frame_info = {}
-        system_error_offset = {}
+        # frame_info = {}
+        # system_error_offset = {}
         
         frame_info = self.co_idx2info[veh_frame_id]
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
 
-        # 生成冻结分布函数
-        bernoulliDist = stats.bernoulli(self.binomial_p) 
-        # B(n, p)
-        trails = bernoulliDist.rvs(self.binomial_n)
-        sample_interval = sum(trails)
-
-        inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
-
+        # inf_frame_id = id_to_str(int(inf_frame_id))
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()
         #cav_id=0是车端，1是路边单元
@@ -249,12 +234,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         data[0]['params'] = OrderedDict()
         data[0]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
         # print(data[0]['params']['vehicles'])
-        lidar_to_novatel_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/lidar_to_novatel/'+str(veh_frame_id)+'.json'))
-        novatel_to_world_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/novatel_to_world/'+str(veh_frame_id)+'.json'))
-
-        transformation_matrix = veh_side_rot_and_trans_to_trasnformation_matrix(lidar_to_novatel_json_file,novatel_to_world_json_file)
-
-        data[0]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix)
+        data[0]['params']['lidar_pose'] = self.get_vehicle_trans(veh_frame_id)
+        # lidar_to_novatel_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/lidar_to_novatel/'+str(veh_frame_id)+'.json'))
+        # novatel_to_world_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/novatel_to_world/'+str(veh_frame_id)+'.json'))
+        # transformation_matrix = veh_side_rot_and_trans_to_trasnformation_matrix(lidar_to_novatel_json_file,novatel_to_world_json_file)
+        # data[0]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix)
+        
 
         data[0]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["vehicle_pointcloud_path"]))
         if self.clip_pc:
@@ -268,22 +253,41 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # data[1]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
         data[1]['params']['vehicles'] = [] # we only load cooperative label in vehicle side
 
-        virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
+        data[1]['params']['lidar_pose'] = self.get_inf_trans(inf_frame_id,system_error_offset)
+        # virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
+        # transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
+        # data[1]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix1)
 
-        transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
-        data[1]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix1)
 
         cur_inf_info = self.inf_idx2info[inf_frame_id]
         data[1]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir, \
             'infrastructure-side', cur_inf_info['pointcloud_path']))
         data[0]['veh_frame_id'] = veh_frame_id
         data[1]['veh_frame_id'] = inf_frame_id
-        data[1]['avg_time_delay'] = sample_interval
-        return data
+
+        past_features = []
+
+        for i in range(self.k):
+            past_feature = OrderedDict()
+            veh_id = id_to_str(int(veh_frame_id) - self.k + i)
+            frame_info = self.co_idx2info[veh_id]
+            inf_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+            past_feature['veh'] = OrderedDict()
+            past_feature['inf'] = OrderedDict()
+            system_error_offset = frame_info["system_error_offset"]
+            past_feature['veh']['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["vehicle_pointcloud_path"]))
+            past_feature['veh']['lidar_pose'] = self.get_vehicle_trans(veh_id)
+
+            past_feature['inf']['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["infrastructure_pointcloud_path"]))
+            past_feature['inf']['lidar_pose'] = self.get_inf_trans(inf_id, system_error_offset)
+
+            past_features.append(past_feature)
+            
+        return data, past_features
 
     def __getitem__(self, idx):
         # base_data_dict = self.retrieve_base_data(idx)
-        base_data_dict = self.retrieve_base_data(idx)
+        base_data_dict, past_features = self.retrieve_base_data(idx)
 
         base_data_dict = add_noise_data_dict(base_data_dict,self.params['noise_setting'])
 
@@ -370,8 +374,10 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                     base_data_dict[cav_id]['params']['lidar_pose'] = lidar_pose_refined
         '''     
 
+        past_processed_features_list = self.get_past_precessed_features_dair(past_features)
 
         for cav_id in cav_id_list:
+
             selected_cav_base = base_data_dict[cav_id]
 
 
@@ -392,8 +398,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                     selected_cav_processed['projected_lidar_clean'])
 
             if self.visualize:
-                projected_lidar_stack.append(
+                if cav_id== 0:
+                    projected_lidar_stack.append(
                     selected_cav_processed['projected_lidar'])
+
+                    # projected_lidar_stack.append(
+                    # selected_cav_processed['projected_lidar'])
 
 
 
@@ -448,6 +458,8 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                 gt_box_center=object_bbx_center,
                 anchors=anchor_box,
                 mask=mask)
+        
+        temporal_trans_matrix = self.get_temporal_trans_matrix(past_features, base_data_dict[0]['params']['lidar_pose'])
 
         processed_data_dict['ego'].update(
             {'object_bbx_center': object_bbx_center,
@@ -459,18 +471,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
              'cav_num': cav_num,
              'pairwise_t_matrix': pairwise_t_matrix,
              'lidar_poses_clean': lidar_poses_clean,
-             'lidar_poses': lidar_poses})
+             'lidar_poses': lidar_poses,
+             'past_features': past_processed_features_list,
+             'temporal_trans_matrix': temporal_trans_matrix})
 
-        # for irregular time delay use:
-        if len(too_far) == 0:
-            avg_time_delay = base_data_dict[1]['avg_time_delay']
-            cp_rate = 1
-        else:
-            avg_time_delay = self.binomial_n
-            cp_rate = 0
-        processed_data_dict['ego'].update(
-            {'avg_time_delay': avg_time_delay,
-                'cp_rate': cp_rate})
+
+        
 
         if self.kd_flag:
             processed_data_dict['ego'].update({'teacher_processed_lidar':
@@ -524,115 +530,3 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
 
         return self.post_processor.generate_object_center_dairv2x(cav_contents,
                                                         reference_lidar_pose)
-
-    def collate_batch_train(self, batch):
-        # Intermediate fusion is different the other two
-        output_dict = {'ego': {}}
-
-        object_bbx_center = []
-        object_bbx_mask = []
-        object_ids = []
-        processed_lidar_list = []
-        # used to record different scenario
-        record_len = []
-        label_dict_list = []
-        lidar_pose_list = []
-        lidar_pose_clean_list = []
-
-        # average time delay
-        avg_time_delay = []
-        # cp rate
-        cp_rate = []
-        
-        # pairwise transformation matrix
-        pairwise_t_matrix_list = []
-
-        if self.kd_flag:
-            teacher_processed_lidar_list = []
-        if self.visualize:
-            origin_lidar = []
-
-        for i in range(len(batch)):
-            ego_dict = batch[i]['ego']
-            object_bbx_center.append(ego_dict['object_bbx_center'])
-            object_bbx_mask.append(ego_dict['object_bbx_mask'])
-            object_ids.append(ego_dict['object_ids'])
-            lidar_pose_list.append(ego_dict['lidar_poses']) # ego_dict['lidar_pose'] is np.ndarray [N,6]
-            lidar_pose_clean_list.append(ego_dict['lidar_poses_clean'])
-
-            processed_lidar_list.append(ego_dict['processed_lidar']) # different cav_num, ego_dict['processed_lidar'] is list.
-            record_len.append(ego_dict['cav_num'])
-
-            label_dict_list.append(ego_dict['label_dict'])
-            pairwise_t_matrix_list.append(ego_dict['pairwise_t_matrix'])
-
-            avg_time_delay.append(ego_dict['avg_time_delay'])
-            cp_rate.append(ego_dict['cp_rate'])
-
-            if self.kd_flag:
-                teacher_processed_lidar_list.append(ego_dict['teacher_processed_lidar'])
-
-            if self.visualize:
-                origin_lidar.append(ego_dict['origin_lidar'])
-
-        # convert to numpy, (B, max_num, 7)
-        object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
-        object_bbx_mask = torch.from_numpy(np.array(object_bbx_mask))
-
-
-        # example: {'voxel_features':[np.array([1,2,3]]),
-        # np.array([3,5,6]), ...]}
-        merged_feature_dict = self.merge_features_to_dict(processed_lidar_list)
-
-        # [sum(record_len), C, H, W]
-        processed_lidar_torch_dict = \
-            self.pre_processor.collate_batch(merged_feature_dict)  # coords 增加了 batch_id 维度，[x, y, z] -> [id, x, y, z]
-        # [2, 3, 4, ..., M], M <= max_cav
-        record_len = torch.from_numpy(np.array(record_len, dtype=int))
-        # [[N1, 6], [N2, 6]...] -> [[N1+N2+...], 6]
-        lidar_pose = torch.from_numpy(np.concatenate(lidar_pose_list, axis=0))
-        lidar_pose_clean = torch.from_numpy(np.concatenate(lidar_pose_clean_list, axis=0))
-        label_torch_dict = \
-            self.post_processor.collate_batch(label_dict_list)
-
-        # (B, max_cav)
-        pairwise_t_matrix = torch.from_numpy(np.array(pairwise_t_matrix_list))
-
-        # add pairwise_t_matrix to label dict
-        label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
-        label_torch_dict['record_len'] = record_len
-
-        # object id is only used during inference, where batch size is 1.
-        # so here we only get the first element.
-        output_dict['ego'].update({'object_bbx_center': object_bbx_center,
-                                   'object_bbx_mask': object_bbx_mask,
-                                   'processed_lidar': processed_lidar_torch_dict,
-                                   'record_len': record_len,
-                                   'label_dict': label_torch_dict,
-                                   'object_ids': object_ids[0],
-                                   'pairwise_t_matrix': pairwise_t_matrix,
-                                   'lidar_pose_clean': lidar_pose_clean,
-                                   'lidar_pose': lidar_pose})
-
-        avg_time_delay = float(np.mean(np.array(avg_time_delay)))
-        cp_rate = float(np.mean(np.array(cp_rate)))
-        output_dict['ego'].update({'avg_time_delay': avg_time_delay,
-                                      'cp_rate': cp_rate})  
-
-
-        if self.visualize:
-            origin_lidar = \
-                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
-            origin_lidar = torch.from_numpy(origin_lidar)
-            output_dict['ego'].update({'origin_lidar': origin_lidar})
-        
-        if self.kd_flag:
-            teacher_processed_lidar_torch_dict = \
-                self.pre_processor.collate_batch(teacher_processed_lidar_list)
-            output_dict['ego'].update({'teacher_processed_lidar':teacher_processed_lidar_torch_dict})
-
-        if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
-            (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item():
-            return None
-
-        return output_dict

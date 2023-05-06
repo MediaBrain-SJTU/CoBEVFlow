@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from opencood.models.sub_modules.resblock import ResNetModified, BasicBlock
-
+# from opencood.models.sub_modules.resblock import ResNetModified, BasicBlock
+from opencood.models.sub_modules.resblock2 import ResNetModified, BasicBlock
 DEBUG = False
 
 class ResNetBEVBackbone(nn.Module):

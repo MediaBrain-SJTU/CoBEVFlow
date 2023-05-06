@@ -92,11 +92,17 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         self.is_ab_regular = False
         if 'is_ab_regular' in params and params['is_ab_regular']:
             self.is_ab_regular = True
+            print("!!! Absolutely Regular !!!")
 
         # 控制是否需要生成GT flow
         self.is_generate_gt_flow = False
         if 'is_generate_gt_flow' in params and params['is_generate_gt_flow']:
             self.is_generate_gt_flow = True
+        
+        # 只有在绘制每个sample的匹配框时用到 sizhewei
+        self.viz_bbx_flag = False
+        if 'viz_bbx_flag' in params and params['viz_bbx_flag']:
+            self.viz_bbx_flag = True
         
         self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
 
@@ -486,6 +492,12 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                     if sample_interval == 0:
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
+                    # if i == 0:
+                    #     sample_interval = 3
+                    # elif i ==1:
+                    #     sample_interval = 2
+                    # else:
+                    #     sample_interval = 1
                     if self.sample_interval_exp==0 \
                         and self.is_no_shift \
                             and i == 0:
@@ -567,7 +579,6 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             'past_k_time_diffs': past_k_time_diffs_stack, np.array of len(\sum_i^num_cav k_i), k_i represents the num of past frames of cav_i
             'avg_sample_interval': float,
             'avg_time_delay': float
-
         }
         '''
         # TODO: debug use
@@ -660,6 +671,12 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         illegal_cav = []
         if self.visualize:
             projected_lidar_stack = []
+
+        if self.viz_bbx_flag:
+            single_lidar_stack = []
+            single_object_stack = []
+            single_object_id_stack = []
+            single_mask_stack = []
         
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
@@ -699,6 +716,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             {
                 'projected_lidar':      # curr lidar in ego space, 用于viz
                 'single_label_dict':	# single view label. 没有经过坐标变换, 用于单体监督            cav view + curr 的label
+                'single_object_bbx_center'
+                'single_object_ids'
                 'curr_feature':         # current feature, lidar预处理得到的feature                 cav view + curr feature
                 'object_bbx_center':	# ego view label. np.ndarray. Shape is (max_num, 7).    ego view + curr 的label
                 'object_ids':			# ego view label index. list. length is (max_num, 7).   ego view + curr 的label
@@ -726,6 +745,13 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             
             if self.visualize:
                 projected_lidar_stack.append(selected_cav_processed['projected_lidar'])
+            if self.viz_bbx_flag:
+                single_lidar_stack.append(selected_cav_processed['single_lidar'])
+                single_object_stack.append(selected_cav_processed['single_object_bbx_center'])
+                single_object_id_stack.append(selected_cav_processed['single_object_ids'])
+                # mask = np.zeros(self.params['postprocess']['max_num'])
+                # mask[:single_object_stack.shape[0]] = 1
+                # single_mask_stack.append(mask)
             
             # single view feature
             curr_feature_stack.append(selected_cav_processed['curr_feature'])
@@ -852,12 +878,20 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                                             'cav_id_list': cav_id_list})
         try:
             tmp = past_k_time_diffs_stack[self.k:].reshape(-1, self.k) # (N, k)
-            tmp_past_k_time_diffs = np.concatenate((tmp[:, :1] , (tmp[:, 1:] - tmp[:, :-1])), axis=1) # (N, k)
+            
+            # tmp_past_k_time_diffs = np.concatenate((tmp[:, :1] , (tmp[:, 1:] - tmp[:, :-1])), axis=1) # (N, k) # TODO: 不同的方法这个计算方式不一样
+            tmp_past_k_time_diffs = tmp[:, :1] # (N, 1) irregular setting 下，只用最近的一个时间间隔
+            
             avg_time_diff = sum(tmp_past_k_time_diffs.reshape(-1)) / tmp_past_k_time_diffs.reshape(-1).shape[0]
-            processed_data_dict['ego'].update({'avg_sample_interval':\
-                sum(past_k_sample_interval_stack[self.k:]) / len(past_k_sample_interval_stack[self.k:])})
             processed_data_dict['ego'].update({'avg_time_delay':\
                 avg_time_diff})
+
+            tmp = past_k_sample_interval_stack[self.k:].reshape(-1, self.k) # (N, k)
+            # avg_sample_interval = sum(tmp.reshape(-1)) / len(tmp.reshape(-1)) # TODO: 不同的方法这个计算方式不一样
+            avg_sample_interval = sum(tmp[:, :1].reshape(-1)) / len(tmp[:, :1].reshape(-1)) # (N, 1) irregular setting 下，只用最近的一个时间间隔
+            processed_data_dict['ego'].update({'avg_sample_interval':\
+                avg_sample_interval})
+            
         except ZeroDivisionError:
             # print("!!! ZeroDivisionError !!!")
             return None
@@ -865,6 +899,16 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         if self.visualize:
             processed_data_dict['ego'].update({'origin_lidar':
                 np.vstack(projected_lidar_stack)})
+
+        if self.viz_bbx_flag:
+            for id, cav in enumerate(cav_id_list):
+                processed_data_dict[id] = {}
+                processed_data_dict[id].update({
+                    'single_lidar': single_lidar_stack[id],
+                    'single_object_bbx_center': single_object_stack[id],
+                    # 'single_object_bbx_mask': single_mask_stack[i],
+                    'single_object_ids': single_object_id_stack[id]
+                })
 
         return processed_data_dict
 
@@ -915,6 +959,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             {
                 'projected_lidar':      # lidar in ego space, 用于viz
                 'single_label_dict':	# single view label. 没有经过坐标变换,                      cav view + curr 的label
+                "single_object_bbx_center": single_object_bbx_center,       # 用于viz single view
+                "single_object_ids": single_object_ids,                # 用于viz single view
                 'flow_gt':              # single view flow
                 'curr_feature':         # current feature, lidar预处理得到的feature
                 'object_bbx_center':	# ego view label. np.ndarray. Shape is (max_num, 7).    ego view + curr 的label
@@ -947,6 +993,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             selected_cav_processed.update({'projected_lidar': projected_lidar})
 
         lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range'])
+        if self.viz_bbx_flag:
+            selected_cav_processed.update({'single_lidar': lidar_np[:, :3]})
         curr_feature = self.pre_processor.preprocess(lidar_np)
         
         # past k transfomation matrix
@@ -1005,20 +1053,18 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             # sizhewei
             # for past k frames' single view label
             ################################################################
-            '''
-            # 5. single view label
-            # past_i label at past_i single view
-            # opencood/data_utils/post_processor/base_postprocessor.py
-            object_bbx_center, object_bbx_mask, object_ids = \
-                self.generate_object_center([selected_cav_base['past_k'][i]], selected_cav_base['past_k'][i]['params']['lidar_pose'])  
-            # generate the anchor boxes
-            # opencood/data_utils/post_processor/voxel_postprocessor.py
-            anchor_box = self.anchor_box
-            single_view_label_dict = self.post_processor.generate_label(
-                    gt_box_center=object_bbx_center, anchors=anchor_box, mask=object_bbx_mask
-                )
-            past_k_label_dicts.append(single_view_label_dict)
-            '''
+            # # 5. single view label
+            # # past_i label at past_i single view
+            # # opencood/data_utils/post_processor/base_postprocessor.py
+            # object_bbx_center, object_bbx_mask, object_ids = \
+            #     self.generate_object_center([selected_cav_base['past_k'][i]], selected_cav_base['past_k'][i]['params']['lidar_pose'])  
+            # # generate the anchor boxes
+            # # opencood/data_utils/post_processor/voxel_postprocessor.py
+            # anchor_box = self.anchor_box
+            # single_view_label_dict = self.post_processor.generate_label(
+            #         gt_box_center=object_bbx_center, anchors=anchor_box, mask=object_bbx_mask
+            #     )
+            # past_k_label_dicts.append(single_view_label_dict)
         
         
 
@@ -1035,36 +1081,38 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
 
         # curr label at single view
         # opencood/data_utils/post_processor/base_postprocessor.py
-        object_bbx_center, object_bbx_mask, object_ids = \
+        single_object_bbx_center, single_object_bbx_mask, single_object_ids = \
             self.generate_object_center([selected_cav_base['curr']], selected_cav_base['curr']['params']['lidar_pose'])  
         # generate the anchor boxes
         # opencood/data_utils/post_processor/voxel_postprocessor.py
         anchor_box = self.anchor_box
         label_dict = self.post_processor.generate_label(
-                gt_box_center=object_bbx_center, anchors=anchor_box, mask=object_bbx_mask
+                gt_box_center=single_object_bbx_center, anchors=anchor_box, mask=single_object_bbx_mask
             )
         
         # curr label at ego view
         object_bbx_center, object_bbx_mask, object_ids = \
             self.generate_object_center([selected_cav_base['curr']], ego_pose)
             
-        selected_cav_processed.update(
-            {"single_label_dict": label_dict,
-             "curr_feature": curr_feature,
-             'object_bbx_center': object_bbx_center[object_bbx_mask == 1],
-             'object_ids': object_ids,
-             'curr_pose': selected_cav_base['curr']['params']['lidar_pose'],
-             'past_k_tr_mats': past_k_tr_mats,
-             'pastk_2_past0_tr_mats': pastk_2_past0_tr_mats,
-             'past_k_poses': past_k_poses,
-             'past_k_features': past_k_features,
-             'past_k_time_diffs': past_k_time_diffs,
-             'past_k_sample_interval': past_k_sample_interval,
-            #  'avg_past_k_time_diffs': avg_past_k_time_diffs,
-            #  'avg_past_k_sample_interval': avg_past_k_sample_interval,
-            #  'past_k_label_dicts': past_k_label_dicts,
-             'if_no_point': if_no_point
-             })
+        selected_cav_processed.update({
+            "single_label_dict": label_dict,
+            "single_object_bbx_center": single_object_bbx_center[single_object_bbx_mask == 1],
+            "single_object_ids": single_object_ids,
+            "curr_feature": curr_feature,
+            'object_bbx_center': object_bbx_center[object_bbx_mask == 1],
+            'object_ids': object_ids,
+            'curr_pose': selected_cav_base['curr']['params']['lidar_pose'],
+            'past_k_tr_mats': past_k_tr_mats,
+            'pastk_2_past0_tr_mats': pastk_2_past0_tr_mats,
+            'past_k_poses': past_k_poses,
+            'past_k_features': past_k_features,
+            'past_k_time_diffs': past_k_time_diffs,
+            'past_k_sample_interval': past_k_sample_interval,
+        #  'avg_past_k_time_diffs': avg_past_k_time_diffs,
+        #  'avg_past_k_sample_interval': avg_past_k_sample_interval,
+        #  'past_k_label_dicts': past_k_label_dicts,
+            'if_no_point': if_no_point
+            })
 
         if self.is_generate_gt_flow:
             # generate flow, from past_0 and curr
@@ -1397,6 +1445,21 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                 np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
             origin_lidar = torch.from_numpy(origin_lidar)
             output_dict['ego'].update({'origin_lidar': origin_lidar})
+
+        if self.viz_bbx_flag:
+            single_lidar = []
+            single_object_bbx_center = []
+            single_object_mask = []
+            single_object_ids = []
+            for i in range(len(batch[0].keys())-1):
+                single_lidar.append(torch.from_numpy(batch[0][i]['single_lidar']))
+                single_object_bbx_center.append(torch.from_numpy(batch[0][i]['single_object_bbx_center']))
+                single_object_ids.append(batch[0][i]['single_object_ids'])
+            output_dict['ego'].update({
+                'single_lidar_list': single_lidar,
+                'single_object_bbx_center': single_object_bbx_center,
+                'single_object_ids': single_object_ids
+            })
             
         # if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
         #     (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item():
@@ -1563,8 +1626,11 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
 
         return pairwise_t_matrix
 
-    def generate_pred_bbx_frames(self, psm_single, rm_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box):
+    def generate_pred_bbx_frames(self, m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box):
         '''
+        m_single : {
+            psm_single, rm_single, (dm_single)
+        }
         box_result : {
             'past_k_time_diff' : 
             [0] : {
@@ -1576,7 +1642,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             [k-1] : { ... }
         }
         '''
-        box_results = self.post_processor.single_post_process(psm_single, rm_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, self.k)
+        box_results = self.post_processor.single_post_process(m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, self.k)
         return box_results
 
 # if __name__ == '__main__':   

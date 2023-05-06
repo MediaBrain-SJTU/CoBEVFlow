@@ -130,6 +130,11 @@ class PointPillarWhere2comm(nn.Module):
         psm_single = self.cls_head(spatial_features_2d)
         rm_single = self.reg_head(spatial_features_2d)
 
+        # TODO: do not collabrate, only use ego info
+        # [Bx2, C, H, W] dair-v2x has 2 cavs
+        # print('spatial_features: ', batch_dict['spatial_features'].shape)
+        # batch_dict['spatial_features'][1, :, :, :] = 0.
+
         # print('spatial_features_2d: ', spatial_features_2d.shape)
         if self.multi_scale:
             fused_feature, communication_rates, result_dict = self.fusion_net(batch_dict['spatial_features'],

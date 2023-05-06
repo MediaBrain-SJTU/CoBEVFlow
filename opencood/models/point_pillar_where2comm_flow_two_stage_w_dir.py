@@ -15,6 +15,7 @@ import torch.nn as nn
 
 from opencood.models.sub_modules.pillar_vfe import PillarVFE
 from opencood.models.sub_modules.point_pillar_scatter import PointPillarScatter
+# from opencood.models.sub_modules.max_resnet_bev_backbone import MaxResNetBEVBackbone
 from opencood.models.sub_modules.base_bev_backbone import BaseBEVBackbone
 from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
@@ -31,9 +32,9 @@ from collections import OrderedDict
 import torch
 import numpy as np
 
-class PointPillarWhere2commFlowTwoStage(nn.Module):
+class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
     def __init__(self, args):
-        super(PointPillarWhere2commFlowTwoStage, self).__init__()
+        super(PointPillarWhere2commFlowTwoStageWDir, self).__init__()
 
         # PIllar VFE
         self.pillar_vfe = PillarVFE(args['pillar_vfe'],
@@ -41,6 +42,7 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
+        # self.backbone = MaxResNetBEVBackbone(args['base_bev_backbone'], 64)
         if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
             self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
         else:
@@ -53,9 +55,9 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
             self.shrink_conv = DownsampleConv(args['shrink_header'])
         self.compression = False
 
-        if args['compression'] > 0:
-            self.compression = True
-            self.naive_compressor = NaiveCompressor(256, args['compression'])
+        # if args['compression'] > 0:
+        #     self.compression = True
+        #     self.naive_compressor = NaiveCompressor(256, args['compression'])
 
         if 'num_sweep_frames' in args:    # number of frames we use in LSTM
             self.k = args['num_sweep_frames']
@@ -107,6 +109,13 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                                     kernel_size=1)
             self.reg_head = nn.Conv2d(128 * 3, 7 * args['anchor_number'],
                                     kernel_size=1)
+
+        if 'dir_args' in args.keys():
+            self.use_dir = True
+            self.dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
+                                  kernel_size=1) # BIN_NUM = 2， # 384
+        else:
+            self.use_dir = False
 
         if self.design_mode == 0:
             self.matcher = Matcher('flow')
@@ -192,7 +201,7 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
         return split_x
 
-    def generate_box_flow(self, data_dict, pred_dict, dataset, device): 
+    def generate_box_flow(self, data_dict, pred_dict, dataset, shape_list, device): 
         """
         data_dict : 
 
@@ -209,9 +218,10 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         anchor_box = data_dict['anchor_box'] # (H, W, 2, 7)
         psm_single_list = pred_dict['psm_single_list']
         rm_single_list = pred_dict['rm_single_list']
+        dm_single_list = pred_dict['dm_single_list']
 
         # H, W = psm_single_list[0].shape[-2:]
-        shape_list = torch.tensor([64, 200, 704]).to(device)
+        # shape_list = torch.tensor([64, H, W]).to(device)
         
         trans_mat_pastk_2_past0_batch = []
         B = len(lidar_pose_batch)
@@ -226,6 +236,9 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
             box_results = OrderedDict()
             psm_single = psm_single_list[b].reshape(-1, self.k, 2, psm_single_list[b].shape[-2], psm_single_list[b].shape[-1]) # (N_b, k, 2, H, W)
             rm_single = rm_single_list[b].reshape(-1, self.k, 14, rm_single_list[b].shape[-2], rm_single_list[b].shape[-1]) # (N_b, k, 14, H, W)
+            if self.use_dir:
+                dm_single = dm_single_list[b].reshape(-1, self.k, 4, dm_single_list[b].shape[-2], dm_single_list[b].shape[-1]) # (N_b, k, 4, H, W)
+
             cav_past_k_time_diff = past_k_time_diff[b]
             cav_trans_mat_pastk_2_past0 = []
             # for all cavs
@@ -252,8 +265,13 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                     pastk_trans_mat_pastk_2_past0.append(unit_mat)
                 pastk_trans_mat_pastk_2_past0 = torch.from_numpy(np.stack(pastk_trans_mat_pastk_2_past0, axis=0)).to(device) # (k, 4, 4)
                 
+                m_single = {}
+                m_single['psm_single'] = psm_single[cav_idx]
+                m_single['rm_single'] = rm_single[cav_idx]
+                if self.use_dir:
+                    m_single['dm_single'] = dm_single[cav_idx]
                 # 1. generate one cav's box results
-                box_results[cav_idx] = dataset.generate_pred_bbx_frames(psm_single[cav_idx], rm_single[cav_idx], pastk_trans_mat_pastk_2_past0, cav_past_k_time_diff[cav_idx*self.k:cav_idx*self.k+self.k], anchor_box)
+                box_results[cav_idx] = dataset.generate_pred_bbx_frames(m_single, pastk_trans_mat_pastk_2_past0, cav_past_k_time_diff[cav_idx*self.k:cav_idx*self.k+self.k], anchor_box)
 
             cav_trans_mat_pastk_2_past0.append(pastk_trans_mat_pastk_2_past0)
             
@@ -302,6 +320,8 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         # N, C, H', W'. [N, 384, 100, 352]
         spatial_features_2d = batch_dict['spatial_features_2d']
         
+        shape_list = torch.tensor(batch_dict['spatial_features'].shape[-3:]).to(pairwise_t_matrix.device)
+
         # downsample feature to reduce memory
         if self.shrink_flag:
             spatial_features_2d = self.shrink_conv(spatial_features_2d)  # (B, 256, H', W')
@@ -326,6 +346,10 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         # [B, 256, 50, 176]
         psm_single = self.cls_head(spatial_features_2d).detach()
         rm_single = self.reg_head(spatial_features_2d).detach()
+
+        if self.use_dir:
+            dm_single = self.dir_head(spatial_features_2d)
+
         single_detection_bbx = None
 
         # if self.design_mode != 4 and not self.only_tune_header_flag:
@@ -335,10 +359,14 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
             single_output = {}
             single_output.update({'psm_single_list': self.regroup(psm_single, record_len, k), 
             'rm_single_list': self.regroup(rm_single, record_len, k)})
+            if self.use_dir:
+                single_output.update({
+                    'dm_single_list': self.regroup(dm_single, record_len, k)
+                })
             if self.viz_bbx_flag:
-                box_flow_map, reserved_mask, single_detection_bbx, matched_idx_list, compensated_results_list = self.generate_box_flow(data_dict, single_output, dataset, psm_single.device)
+                box_flow_map, reserved_mask, single_detection_bbx, matched_idx_list, compensated_results_list = self.generate_box_flow(data_dict, single_output, dataset, shape_list, psm_single.device)
             else:
-                box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, psm_single.device)
+                box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, shape_list, psm_single.device)
 
         if 'flow_gt' in data_dict['label_dict']:
             flow_gt = data_dict['label_dict']['flow_gt']
@@ -432,6 +460,10 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         # fuse 之后的 feature (ego)
         output_dict = {'psm': psm,
                        'rm': rm}
+
+        if self.use_dir:
+            dm = self.dir_head(fused_feature)
+            output_dict.update({'dm': dm})
 
         if self.compensation:
             if self.single_supervise:

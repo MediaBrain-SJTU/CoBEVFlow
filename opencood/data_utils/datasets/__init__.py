@@ -29,6 +29,7 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_fl
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_singleframe import IntermediateFusionDatasetIrregularSingleframe
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_new import IntermediateFusionDatasetIrregularFlowNew
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_variance import IntermediateFusionDatasetIrregularFlowVariance
+from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular_multi import IntermediateFusionDatasetDAIRIrregularMulti
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -56,6 +57,7 @@ __all__ = {
     'IntermediateFusionDatasetIrregularSingleframe': IntermediateFusionDatasetIrregularSingleframe,
     'IntermediateFusionDatasetIrregularFlowNew': IntermediateFusionDatasetIrregularFlowNew,
     'IntermediateFusionDatasetDAIRIrregular': IntermediateFusionDatasetDAIRIrregular,
+    'IntermediateFusionDatasetDAIRIrregularMulti': IntermediateFusionDatasetDAIRIrregularMulti,
     'IntermediateFusionDatasetIrregularFlowVariance': IntermediateFusionDatasetIrregularFlowVariance
 }
 

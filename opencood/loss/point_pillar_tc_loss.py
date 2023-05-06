@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-
+from opencood.utils.common_utils import limit_period
 
 class WeightedSmoothL1Loss(nn.Module):
     """
@@ -178,12 +178,17 @@ class PointPillarTcLoss(nn.Module):
             else:
                 rm = output_dict['rm']  # [B, 14, 50, 176]
                 psm = output_dict['psm'] # [B, 2, 50, 176]
+                if self.use_dir:
+                    dm = output_dict["dm"] # [B, 4, 50, 176]
 
             # rename variable 
             if f'psm{suffix}' in output_dict:
                 psm = output_dict[f'psm{suffix}']
             if f'rm{suffix}' in output_dict:
                 rm = output_dict[f'rm{suffix}']
+            if self.use_dir:
+                if f'dm{suffix}' in output_dict:
+                    dm = output_dict[f'dm{suffix}']
             
             targets = target_dict['targets']                # B, H, W, 14
             box_cls_labels = target_dict['pos_equal_one']   # B, H, W, 2
@@ -234,8 +239,8 @@ class PointPillarTcLoss(nn.Module):
             ######## direction ##########
             if self.use_dir:
                 dir_targets = self.get_direction_target(targets)
-                N =  output_dict["dm"].shape[0]
-                dir_logits = output_dict["dm"].permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H*W*#anchor, 2]
+                N =  dm.shape[0]
+                dir_logits = dm.permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H*W*#anchor, 2]
 
                 dir_loss = softmax_cross_entropy_with_logits(dir_logits.view(-1, self.anchor_num), dir_targets.view(-1, self.anchor_num)) 
                 dir_loss = dir_loss.view(dir_logits.shape[:2]) * reg_weights # [N, H*W*anchor_num]
@@ -319,6 +324,30 @@ class PointPillarTcLoss(nn.Module):
                             boxes2[..., dim + 1:]], dim=-1)
         return boxes1, boxes2
 
+    def get_direction_target(self, reg_targets):
+        """
+        Args:
+            reg_targets:  [N, H * W * #anchor_num, 7]
+                The last term is (theta_gt - theta_a)
+        
+        Returns:
+            dir_targets:
+                theta_gt: [N, H * W * #anchor_num, NUM_BIN] 
+                NUM_BIN = 2
+        """
+        # (1, 2, 1)
+        H_times_W_times_anchor_num = reg_targets.shape[1]
+        anchor_map = self.anchor_yaw_map.repeat(1, H_times_W_times_anchor_num//self.anchor_num, 1).to(reg_targets.device) # [1, H * W * #anchor_num, 1]
+        rot_gt = reg_targets[..., -1] + anchor_map[..., -1] # [N, H*W*anchornum]
+        offset_rot = limit_period(rot_gt - self.dir_offset, 0, 2 * np.pi)
+        dir_cls_targets = torch.floor(offset_rot / (2 * np.pi / self.num_bins)).long()  # [N, H*W*anchornum]
+        dir_cls_targets = torch.clamp(dir_cls_targets, min=0, max=self.num_bins - 1)
+        # one_hot:
+        # if rot_gt > 0, then the label is 1, then the regression target is [0, 1]
+        dir_cls_targets = one_hot_f(dir_cls_targets, self.num_bins)
+        return dir_cls_targets
+
+
 
     def logging(self, epoch, batch_id, batch_len, writer = None, suffix=""):
         """
@@ -365,6 +394,12 @@ class PointPillarTcLoss(nn.Module):
             if self.use_dir:
                 writer.add_scalar('dir_loss'+suffix, dir_loss,
                             epoch*batch_len + batch_id)
+
+def one_hot_f(tensor, num_bins, dim=-1, on_value=1.0, dtype=torch.float32):
+    tensor_onehot = torch.zeros(*list(tensor.shape), num_bins, dtype=dtype, device=tensor.device) 
+    tensor_onehot.scatter_(dim, tensor.unsqueeze(dim).long(), on_value)                    
+    return tensor_onehot
+
 
 def softmax_cross_entropy_with_logits(logits, labels):
     param = list(range(len(logits.shape)))
