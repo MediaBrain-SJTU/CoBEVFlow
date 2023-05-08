@@ -493,7 +493,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
                     # if i == 0:
-                    #     sample_interval = 3
+                    #     sample_interval = 5
                     # elif i ==1:
                     #     sample_interval = 2
                     # else:

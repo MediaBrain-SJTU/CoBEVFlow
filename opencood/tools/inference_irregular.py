@@ -163,9 +163,9 @@ def main():
     for i, batch_data in tenumerate(data_loader):
         # if i < 90:
         #     continue
-        if i > 20:
-            print('finished!')
-            break # TODO: debug use
+        # if i > 20:
+        #     print('finished!')
+        #     break # TODO: debug use
             
         if batch_data is None:
             continue
@@ -278,7 +278,7 @@ def main():
                                                 npy_save_path)
 
             if (i % opt.save_vis_interval == 0) and (pred_box_tensor is not None):
-                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%.2f_%d'%(hypes['binomial_p'], hypes['ir_range']))
+                vis_save_path_root = os.path.join(opt.model_dir, f'vis_{opt.note}_%.2f'%(hypes['binomial_p']))
                 if not os.path.exists(vis_save_path_root):
                     os.makedirs(vis_save_path_root)
 
@@ -357,7 +357,7 @@ def main():
         avg_sample_interval /= i
         avg_time_var /= i
         ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
-                                    opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, avg_time_var, opt.note+'_'+str("%.2f"%hypes['binomial_p'])+str("_%d"%hypes['ir_range']))
+                                    opt.model_dir, noise_level, avg_time_delay, avg_sample_interval, avg_time_var, opt.note+'_'+str("%.2f"%hypes['binomial_p']))
     elif opt.dataset == 'd':
         avg_sample_interval /= i
         avg_cp_rate /= i

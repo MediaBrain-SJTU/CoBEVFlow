@@ -131,9 +131,8 @@ class raindrop_fuse(nn.Module):
             if self.agg_mode == 'MAX': # max fusion, debug use
                 self.fuse_modules = MaxFusion()
 
-        # TODO: OPV2V/IRV2V 200x704, DAIR-V2X 200x504
-        self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 504, k = 2, TM_Flag = False)
-        print('*** channel_size = 64, h = 200, w = 504, k = 2, TM_Flag = False ***')
+        self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 704, k = 2, TM_Flag = False)
+        print('*** channel_size = 64, h = 200, w = 704, k = 2, TM_Flag = False ***')
 
         # self.stpn = STPN(args['channel_size'])
         # self.motion_pred = MotionPrediction(seq_len=1)
@@ -160,7 +159,7 @@ class raindrop_fuse(nn.Module):
             different cav's lidar feature
             for example: k=4, then return [(3x4, C, H, W), (2x4, C, H, W), ...]
         """
-        cum_sum_len = torch.cumsum(len*k, dim=0)
+        cum_sum_len = torch.cumsum(len*k-(k-1), dim=0)
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
         
         return split_x
@@ -188,29 +187,13 @@ class raindrop_fuse(nn.Module):
         flow_list = []
         all_recon_loss = 0
         for b in range(B):
-            # TODO: IRV2V
-            # all_feats = batch_node_features[b]
-            # non_ego_feats = all_feats[1:].clone()
-            # non_ego_feats = non_ego_feats.reshape(-1, K, C, H, W)
-            # estimated_non_ego_feats = self.syncnet(non_ego_feats[:, 1:], [1]) # [N-1, 1, C, H, W]
-            # # estimated_non_ego_feats = non_ego_feats[:, 1:2]
-            # updated_features_list.append(torch.cat([all_feats[0].unsqueeze(0), estimated_non_ego_feats[:,0]], dim=0))
-            # recon_loss = F.smooth_l1_loss(estimated_non_ego_feats, non_ego_feats[:,:1])
-            # all_recon_loss += recon_loss
-
-            # TODO: DAIR-V2X
             all_feats = batch_node_features[b]
-            non_ego_feats = all_feats[K:].clone()
+            non_ego_feats = all_feats[1:].clone()
             non_ego_feats = non_ego_feats.reshape(-1, K, C, H, W)
-            estimated_non_ego_feats_to_bp = self.syncnet(non_ego_feats[:, 1:], [1]) # [N-1, 1, C, H, W]
-
-            # TODO: DAIR-V2X, test 用所有帧，train用前两帧
-            # estimated_non_ego_feats = self.syncnet(non_ego_feats[:, :-1], [1]) # [N-1, 1, C, H, W]
-            estimated_non_ego_feats = self.syncnet(non_ego_feats, [1]) # [N-1, 1, C, H, W]
-
+            estimated_non_ego_feats = self.syncnet(non_ego_feats[:, 1:], [1]) # [N-1, 1, C, H, W]
             # estimated_non_ego_feats = non_ego_feats[:, 1:2]
             updated_features_list.append(torch.cat([all_feats[0].unsqueeze(0), estimated_non_ego_feats[:,0]], dim=0))
-            recon_loss = F.smooth_l1_loss(estimated_non_ego_feats_to_bp, non_ego_feats[:,:1])
+            recon_loss = F.smooth_l1_loss(estimated_non_ego_feats, non_ego_feats[:,:1])
             all_recon_loss += recon_loss
 
         updated_features_all = torch.cat(updated_features_list, dim=0)  # (sum(B,N), C, H, W)

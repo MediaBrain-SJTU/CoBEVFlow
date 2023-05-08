@@ -82,6 +82,10 @@ class PointPillarWhere2commAttn(nn.Module):
                                     kernel_size=1)
             self.reg_head = nn.Conv2d(int(dim), 7 * args['anchor_number'],
                                     kernel_size=1)
+            self.fused_cls_head = nn.Conv2d(int(dim), args['anchor_number'],
+                                    kernel_size=1)
+            self.fused_reg_head = nn.Conv2d(int(dim), 7 * args['anchor_number'],
+                                    kernel_size=1)
         else:
             self.cls_head = nn.Conv2d(128 * 3, args['anchor_number'],
                                     kernel_size=1)
@@ -92,6 +96,8 @@ class PointPillarWhere2commAttn(nn.Module):
             self.use_dir = True
             self.dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
                                   kernel_size=1) # BIN_NUM = 2， # 384
+            self.fused_dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
+                                    kernel_size=1)
         else:
             self.use_dir = False
 
@@ -121,6 +127,15 @@ class PointPillarWhere2commAttn(nn.Module):
         for p in self.cls_head.parameters():
             p.requires_grad = False
         for p in self.reg_head.parameters():
+            p.requires_grad = False
+
+        # TODO: for only tune dir header use.
+        for p in self.fused_cls_head.parameters():
+            p.requires_grad = False
+        for p in self.fused_reg_head.parameters():
+            p.requires_grad = False
+
+        for p in self.rain_fusion.parameters():
             p.requires_grad = False
     
     def regroup(self, x, record_len, k=1):
@@ -250,15 +265,15 @@ class PointPillarWhere2commAttn(nn.Module):
         ##############
         
         # print('fused_feature: ', fused_feature.shape)
-        psm = self.cls_head(fused_feature)
-        rm = self.reg_head(fused_feature)
+        psm = self.fused_cls_head(fused_feature)
+        rm = self.fused_reg_head(fused_feature)
         
         # fuse 之后的 feature (ego)
         output_dict = {'psm': psm,
                        'rm': rm}
         
         if self.use_dir:
-            dm = self.dir_head(fused_feature)
+            dm = self.fused_dir_head(fused_feature)
             output_dict.update({'dm': dm})
 
         if self.compensation:

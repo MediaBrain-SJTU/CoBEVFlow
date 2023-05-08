@@ -120,7 +120,7 @@ def draw_trajectory(pt_file, save_path):
 
 
 def main():
-    data_dir = '/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir/vis_cobevflow_0.50_0'
+    data_dir = '/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_521_trick_reverse_new_0.50_0'
 
     files = glob.glob(os.path.join(data_dir, 'bbx_folder', '*.pt'))
     files.sort()

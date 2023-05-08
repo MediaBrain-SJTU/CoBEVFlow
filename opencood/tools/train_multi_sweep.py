@@ -251,7 +251,6 @@ def main():
         sample_interval = 0
         i = 0
         for i, batch_data in enumerate(train_loader): 
-            continue # TODO: delete this line
             if batch_data is None:
                 continue
             # start_time = time.time()

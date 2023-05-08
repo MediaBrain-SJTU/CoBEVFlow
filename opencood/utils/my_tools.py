@@ -164,16 +164,25 @@ def create_small_dataset(split_name='train', size_scene=4, size_cav=3, size_time
         if i==size_scene:
             break
 
+# 用于单独保存子图的函数
+def save_subfig(fig,ax,save_path,fig_name):
+    bbox = ax.get_tightbbox(fig.canvas.get_renderer()).expanded(1.02, 1.02)
+    extent = bbox.transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(save_path+fig_name, bbox_inches=extent, dpi=600, format='pdf')
+
 if __name__ == "__main__":
     # to_npy_and_json(split_name='validate')
     # create_small_dataset(split_name='train')
 
     root_dirs = "/remote-home/share/sizhewei/logs"
     note = 'major_irv2v'
-    save_path = f"./opencood/result_{note}.jpg"
+    format = 'pdf'
+    save_path = f"./opencood/result_{note}.{format}"
     title = "Average Precision curves of different methods on the IRV2V dataset at different average time intervals."
     
-    split_list = ['late', 'v2vnet', 'v2xvit', 'where2comm', 'cobevflow', 'where2comm_syncnet'] #
+    split_list = ['late', 'v2vnet', 'v2xvit', 'disconet', 'where2comm', 'where2comm_syncnet', 'cobevflow'] #
+    colors = ['#999999', '#E7DAD2', '#BEB8DC', '#82B0D2', '#8ECFC9', '#FFBE7A', '#FA7F6F']
+    # colors = ['lightskyblue', 'lightseagreen', 'tomato', 'orange', 'gray', 'purple']
     single_split_name = 'single'
 
     num_delay = 15
@@ -182,11 +191,22 @@ if __name__ == "__main__":
     plt.figure()
     fig, ax = plt.subplots(1,2, sharex='col', sharey=False, figsize=(18,6))
     fig.suptitle(f'{title}', fontsize='x-large', y=0.99)
-    fig.text(0.5, 0.03, 'Expectation of time intervals (ms).', ha='center', fontsize='x-large')
-    fig.text(0.08, 0.5, 'AP', va='center', rotation='vertical', fontsize='x-large')
+    # fig.text(0.5, 0.03, 'Mean delay of the most recent frame(ms).', ha='center', fontsize='x-large')
+    # fig.text(0.08, 0.5, 'AP@0.50', va='center', rotation='vertical', fontsize='x-large')
     # ax30 = ax[0]; 
     ax50 = ax[0]; ax70 = ax[1]
-    colors = ['lightskyblue', 'lightseagreen', 'tomato', 'orange', 'purple', 'gray']
+    
+    # for single fusion
+    method_name = 'Single'
+    # eval_file = os.path.join(root_dirs, f'eval_{single_split_name}.yaml')
+    eval_file = '/remote-home/share/sizhewei/logs/opv2v_late_fusion/eval_no_noise_single_delay_0.00.yaml'
+    single_color = 'red'
+    with open(eval_file, "r", encoding="utf-8") as f:
+        data = yaml.load(f, Loader=yaml.FullLoader)
+    # plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], color=single_color, linestyle='--', label=method_name)
+    plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], color=single_color, linestyle='--', label=method_name)
+    plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], color=single_color, linestyle='--', label=method_name)
+
     for split_i, split_name in enumerate(split_list):
         ap_list = []
         delays = []
@@ -202,20 +222,26 @@ if __name__ == "__main__":
             method_name = 'V2X-ViT'
             file_name = 'opv2v_point_pillar_v2xvit_v1_slren'
             eval_name = 'v2xvit'
+        elif split_name == 'disconet':
+            method_name = 'DiscoNet'
+            file_name = 'opv2v_disconet_sren'
+            eval_name = 'disconet'
         elif split_name == 'where2comm':
             method_name = 'Where2comm'
-            file_name = 'irv2v_where2comm_max_multiscale_resnet'
-            eval_name = 'where2comm_resnet_multiscale'
+            file_name = 'irv2v_where2comm_cobevflow_w_dir_finetune' #'irv2v_where2comm_max_multiscale_resnet'
+            eval_name = 'where2comm'
         elif split_name == 'where2comm_syncnet':
-            method_name = 'SyncNet'
+            method_name = 'Where2comm + SyncNet'
             file_name = 'irv2v_where2comm_syncnet_wo_tm_test'
             eval_name = 'syncnet_ir'
         elif split_name == 'cobevflow':
             method_name = 'CoBEVFlow (ours)'
-            file_name = 'opv2v_where2comm_cobevflow_w_dir'
-            eval_name = 'cobevflow_r'
+            file_name = 'irv2v_where2comm_cobevflow_w_dir_finetune' #'opv2v_where2comm_cobevflow_w_dir'
+            eval_name = 'cobevflow_reverse'
         latest_time_delay = -100.00
         for i in tqdm(np.linspace(0, 0.5, 26)):
+            if i < 0.1 and i != 0:
+                continue
             # log_file = os.path.join(split_name, f"eval_{note}_%.1f.yaml" % i)
             eval_file = os.path.join(root_dirs, file_name, f"eval_no_noise_{eval_name}_%.2f.yaml" % i)
             # if split_name == 'cobevflow':
@@ -227,10 +253,10 @@ if __name__ == "__main__":
             with open(eval_file, "r", encoding="utf-8") as f:
                 data = yaml.load(f, Loader=yaml.FullLoader)
             
-            try:
-                unit_time_delay = -data['avg_time_delay']
-            except:
-                unit_time_delay = i*1000
+            # try:
+            #     unit_time_delay = -data['avg_time_delay']
+            # except:
+            unit_time_delay = i*1000
 
             if (unit_time_delay - latest_time_delay) < 30:
                 continue
@@ -256,35 +282,32 @@ if __name__ == "__main__":
         
         color = colors[split_i]
         # plt.sca(ax30); plt.plot(delays, ap_30_list, color=color, marker='+', label = method_name)
-        plt.sca(ax50); plt.plot(delays, ap_50_list, color=color, marker='+', label = method_name)
-        plt.sca(ax70); plt.plot(delays, ap_70_list, color=color, marker='+', label = method_name)
-    
-    # for single fusion
-    method_name = single_split_name.split('_')[0]
-    # eval_file = os.path.join(root_dirs, f'eval_{single_split_name}.yaml')
-    eval_file = '/remote-home/share/sizhewei/logs/opv2v_late_fusion/eval_no_noise_single_delay_0.00.yaml'
-    single_color = 'red'
-    with open(eval_file, "r", encoding="utf-8") as f:
-        data = yaml.load(f, Loader=yaml.FullLoader)
-    # plt.sca(ax30); plt.plot([0,max_x],[data['ap_30'],data['ap_30']], color=single_color, linestyle='--', label=method_name)
-    plt.sca(ax50); plt.plot([0,max_x],[data['ap_50'],data['ap_50']], color=single_color, linestyle='--', label=method_name)
-    plt.sca(ax70); plt.plot([0,max_x],[data['ap_70'],data['ap_70']], color=single_color, linestyle='--', label=method_name)
+        plt.sca(ax50); plt.plot(delays, ap_50_list, color=color, linewidth='3', label = method_name) # , marker='+'
+        plt.sca(ax70); plt.plot(delays, ap_70_list, color=color, linewidth='3', label = method_name) # , marker='+'
 
     xaxis = np.linspace(0, max_x, 11)
     # ax30.set_title('The Results for AP@0.3'); ax30.grid(True); 
     # ax30.set_xticks(xaxis); \
     #     ax30.legend(loc = 'lower left')
-    yaxis = np.linspace(0.2, 0.9, 5)
-    ax50.set_title('The Results for AP@0.5'); ax50.grid(True); 
+    yaxis = np.linspace(0.2, 0.9, 8)
+    # ax50.set_title('The Results for AP@0.5'); 
+    ax50.grid(True); 
     ax50.set_xticks(xaxis); ax50.set_yticks(yaxis); 
+    ax50.set_xlabel('Expectation time delay of the latest frame (ms)'); ax50.set_ylabel('AP@0.50');
     ax50.legend(loc = 'lower left')
     
-    yaxis = np.linspace(0.1, 0.9, 5)
-    ax70.set_title('The Results for AP@0.7'); ax70.grid(True); 
+    yaxis = np.linspace(0.1, 0.9, 9)
+    # ax70.set_title('The Results for AP@0.7'); 
+    ax70.grid(True); 
     ax70.set_xticks(xaxis); ax70.set_yticks(yaxis); 
+    ax70.set_xlabel('Expectation time delay of the latest frame (ms)'); ax70.set_ylabel('AP@0.70');
     ax70.legend(loc = 'lower left')
 
-    plt.savefig(save_path)
+    save_subfig(fig,ax[0],'./opencood/','ir2v2_ap50.pdf')
+    save_subfig(fig,ax[1],'./opencood/','irv2v_ap70.pdf')
+
+    # plt.legend(frameon=False)
+    plt.savefig(save_path, dpi=600, format=format)
     print("=== Plt save finished!!! ===")
     # plt.title('标题')
     # plt.show()

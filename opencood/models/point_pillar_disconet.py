@@ -45,12 +45,12 @@ class PointPillarDiscoNet(nn.Module):
         voxel_coords = data_dict['processed_lidar']['voxel_coords']
         voxel_num_points = data_dict['processed_lidar']['voxel_num_points']
 
-        teacher_voxel_features = data_dict['teacher_processed_lidar']['voxel_features']
-        teacher_voxel_coords = data_dict['teacher_processed_lidar']['voxel_coords']
-        teacher_voxel_num_points = data_dict['teacher_processed_lidar']['voxel_num_points']
+        # teacher_voxel_features = data_dict['teacher_processed_lidar']['voxel_features']
+        # teacher_voxel_coords = data_dict['teacher_processed_lidar']['voxel_coords']
+        # teacher_voxel_num_points = data_dict['teacher_processed_lidar']['voxel_num_points']
 
         record_len = data_dict['record_len']
-        lidar_pose = data_dict['lidar_pose']
+        # lidar_pose = data_dict['lidar_pose']
         pairwise_t_matrix = data_dict['pairwise_t_matrix']
 
         batch_dict = {'voxel_features': voxel_features,

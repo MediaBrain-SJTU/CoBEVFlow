@@ -1101,7 +1101,10 @@ class Matcher(nn.Module):
                 delta_mat = center_points_past1_repeat - center_points_past2_repeat
 
                 angle_mat = torch.atan2(delta_mat[:,:,1], delta_mat[:,:,0]) # [num_cav_past2,num_cav_past1]
-                visible_mat = torch.where((torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) < 0.785) | (torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) > 5.495), 1, 0) # [num_cav_past2,num_cav_past1]
+
+                coord_past2_angle_reverse = coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0]).clone()
+
+                visible_mat = torch.where((torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) < 0.785) | (torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) > 5.495) , 1, 0) # [num_cav_past2,num_cav_past1]
 
                 cost_mat_center = torch.cdist(center_points_past2, center_points_past1) # [num_cav_past2,num_cav_past1]
 
@@ -1127,6 +1130,34 @@ class Matcher(nn.Module):
 
                 past2_ids = match_to_keep[0]
                 past1_ids = match[1][match_to_keep[0]]
+                
+                coord_past2_angle_reverse += 3.1415926
+                coord_past2_angle_reverse[coord_past2_angle_reverse>3.1415926] -= 6.2831852
+
+                left_past2_id = [n for n in range(cost_mat_center.shape[0]) if n not in past2_ids]
+                left_past1_id = [n for n in range(cost_mat_center.shape[1]) if n not in past1_ids]
+
+                angle_mat_left = angle_mat[left_past2_id, :][:, left_past1_id]
+
+                coord_past2_angle_reverse_left = coord_past2_angle_reverse[left_past2_id, :][: ,left_past1_id]
+
+                visible_mat_left = torch.where((torch.abs(angle_mat_left-coord_past2_angle_reverse_left) < 0.785) | (torch.abs(angle_mat_left-coord_past2_angle_reverse_left) > 5.495) , 1, 0) # [num_cav_past2,num_cav_past1]
+                
+                cost_mat_center_left = torch.cdist(center_points_past2[left_past2_id], center_points_past1[left_past1_id]) # [num_cav_past2,num_cav_past1]
+                # cost_mat_center_left = cost_mat_center[left_past2_id, :][:, left_past1_id]
+
+                visible_mat_left = torch.where(cost_mat_center_left<0.5, 1, visible_mat_left)
+                cost_mat_center_left = torch.where(visible_mat_left==1, cost_mat_center_left, tmp_thre)
+
+                if cost_mat_center_left.shape[1] != 0 and cost_mat_center_left.shape[0] != 0:
+                    match_left = torch.min(cost_mat_center_left, dim=1)
+                    match_to_keep_left = torch.where(match_left[0] < 5)
+
+                    if match_to_keep_left[0].shape[0] != 0:
+                        past2_ids_left = match_to_keep_left[0]
+                        past2_ids = torch.cat([past2_ids, torch.tensor(left_past2_id)[past2_ids_left].to(past2_ids.device)])
+                        past1_ids_left = match_left[1][match_to_keep_left[0]]
+                        past1_ids = torch.cat([past1_ids, torch.tensor(left_past1_id)[past1_ids_left].to(past1_ids.device)])
 
                 # ##############################################
                 # self.thre_post_process = 10

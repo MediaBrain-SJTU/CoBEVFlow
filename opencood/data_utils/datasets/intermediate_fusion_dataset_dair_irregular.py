@@ -190,7 +190,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         cur_inf_info = self.inf_idx2info[inf_frame_id]
         if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
             return False
-        for i in range(self.binomial_n * self.k):
+        for i in range(3*self.binomial_n * self.k):# TODO: delete 3
             delay_id = id_to_str(int(inf_frame_id) - i) 
             if delay_id not in self.inf_fid2veh_fid.keys():
                 return False

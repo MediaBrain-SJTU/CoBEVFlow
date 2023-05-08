@@ -211,7 +211,7 @@ class IntermediateFusionDatasetDAIRIrregularMulti(intermediate_fusion_dataset_op
         cur_inf_info = self.inf_idx2info[inf_frame_id]
         if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
             return False
-        for i in range(self.binomial_n * self.k):
+        for i in range(self.binomial_n * self.k): 
             delay_id = id_to_str(int(inf_frame_id) - i) 
             if delay_id not in self.inf_fid2veh_fid.keys():
                 return False
@@ -307,8 +307,9 @@ class IntermediateFusionDatasetDAIRIrregularMulti(intermediate_fusion_dataset_op
                 latest_frame_id = curr_inf_frame_id
                 for j in range(self.k):
                     # B(n, p)
-                    trails = bernoulliDist.rvs(self.binomial_n)
-                    sample_interval = sum(trails)
+                    # trails = bernoulliDist.rvs(self.binomial_n)
+                    # sample_interval = sum(trails)
+                    sample_interval = 5
                     latest_frame_id = id_to_str(int(latest_frame_id) - sample_interval)
                     try:
                         veh_frame_id_of_inf = self.inf_fid2veh_fid[latest_frame_id]
