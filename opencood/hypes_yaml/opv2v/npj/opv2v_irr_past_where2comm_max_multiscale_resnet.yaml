@@ -1,8 +1,8 @@
-name: where2comm_max_multiscale_resnet_32ch
+name: irv2v_where2comm_max_multiscale_resnet_32ch
 
-root_dir: "/DB/public/OPV2V_irregular_npy/train/"
-validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
-test_dir: "/DB/public/OPV2V_irregular_npy/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False

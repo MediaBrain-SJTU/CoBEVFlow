@@ -103,6 +103,10 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         self.viz_bbx_flag = False
         if 'viz_bbx_flag' in params and params['viz_bbx_flag']:
             self.viz_bbx_flag = True
+
+        self.num_roi_thres = -1
+        if 'num_roi_thres' in params:
+            self.num_roi_thres = params['num_roi_thres']
         
         self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
 
@@ -254,7 +258,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                     # we regard the agent with the minimum id as the ego
                     self.scenario_database[i][cav_id]['ego'] = True
                     # num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
-                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k
+                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k #* 3 # TODO: 
                     if not self.len_record:
                         self.len_record.append(num_ego_timestamps)
                     else:
@@ -388,7 +392,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
         curr_timestamp_idx = idx if scenario_index == 0 else \
                         idx - self.len_record[scenario_index - 1]
-        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k #*3 # TODO:
         
         # load files for all CAVs
         for cav_id, cav_content in scenario_database.items():
@@ -492,30 +496,38 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                     if sample_interval == 0:
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
-                    # if i == 0:
-                    #     sample_interval = 5
-                    # elif i ==1:
-                    #     sample_interval = 2
-                    # else:
-                    #     sample_interval = 1
-                    if self.sample_interval_exp==0 \
-                        and self.is_no_shift \
-                            and i == 0:
-                        data[cav_id]['past_k'][i] = data[cav_id]['curr']
-                        continue
-                    if self.is_same_sample_interval:
-                        sample_interval = self.sample_interval_exp
+                    # delay_debug = 6
+                    if i == 0:
+                        sample_interval = 3 #delay_debug
+                    elif i ==1:
+                        sample_interval = 3
+                        # sample_set = [2,3]
+                        # import random
+                        # sample_interval = random.sample(sample_set, 1)[0] #3 #10 - delay_debug
+                        # trails = bernoulliDist.rvs(self.binomial_n)
+                        # sample_interval = sum(trails)
                     else:
-                        # B(n, p)
-                        trails = bernoulliDist.rvs(self.binomial_n)
-                        sample_interval = sum(trails)
-                    if sample_interval==0:
-                        if i==0: # 检查past 0 的实际时间是否在curr 的后面
-                            tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0]
-                            if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0:
-                                sample_interval = 1
-                        if i>0: # 过去的几帧不要重复
-                            sample_interval = 1                
+                        sample_interval = 3
+                        # trails = bernoulliDist.rvs(self.binomial_n)
+                        # sample_interval = sum(trails)
+                    # if self.sample_interval_exp==0 \
+                    #     and self.is_no_shift \
+                    #         and i == 0:
+                    #     data[cav_id]['past_k'][i] = data[cav_id]['curr']
+                    #     continue
+                    # if self.is_same_sample_interval:
+                    #     sample_interval = self.sample_interval_exp
+                    # else:
+                    #     # B(n, p)
+                    #     trails = bernoulliDist.rvs(self.binomial_n)
+                    #     sample_interval = sum(trails)
+                    # if sample_interval==0:
+                    #     if i==0: # 检查past 0 的实际时间是否在curr 的后面
+                    #         tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0]
+                    #         if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0:
+                    #             sample_interval = 1
+                    #     if i>0: # 过去的几帧不要重复
+                    #         sample_interval = 1                
 
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = {}
@@ -677,6 +689,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             single_object_stack = []
             single_object_id_stack = []
             single_mask_stack = []
+            single_past_lidar_stack = []
         
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
@@ -749,6 +762,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                 single_lidar_stack.append(selected_cav_processed['single_lidar'])
                 single_object_stack.append(selected_cav_processed['single_object_bbx_center'])
                 single_object_id_stack.append(selected_cav_processed['single_object_ids'])
+                single_past_lidar_stack.append(selected_cav_processed['single_past_lidar'])
                 # mask = np.zeros(self.params['postprocess']['max_num'])
                 # mask[:single_object_stack.shape[0]] = 1
                 # single_mask_stack.append(mask)
@@ -891,6 +905,11 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             avg_sample_interval = sum(tmp[:, :1].reshape(-1)) / len(tmp[:, :1].reshape(-1)) # (N, 1) irregular setting 下，只用最近的一个时间间隔
             processed_data_dict['ego'].update({'avg_sample_interval':\
                 avg_sample_interval})
+
+            tmp_var = np.var(tmp, axis=1) # (N, )
+            avg_var = np.mean(tmp_var)
+            processed_data_dict['ego'].update({'avg_var':\
+                avg_var})
             
         except ZeroDivisionError:
             # print("!!! ZeroDivisionError !!!")
@@ -907,7 +926,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                     'single_lidar': single_lidar_stack[id],
                     'single_object_bbx_center': single_object_stack[id],
                     # 'single_object_bbx_mask': single_mask_stack[i],
-                    'single_object_ids': single_object_id_stack[id]
+                    'single_object_ids': single_object_id_stack[id],
+                    'single_past_lidar': single_past_lidar_stack[id]
                 })
 
         return processed_data_dict
@@ -1036,6 +1056,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             lidar_np = shuffle_points(lidar_np)
             lidar_np = mask_ego_points(lidar_np) # remove points that hit itself
             lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range'])
+            if self.viz_bbx_flag:
+                selected_cav_processed.update({'single_past_lidar': lidar_np[:, :3]})
             processed_features = self.pre_processor.preprocess(lidar_np)
             past_k_features.append(processed_features)
 
@@ -1299,6 +1321,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
         past_k_sample_interval = []
         past_k_avg_time_delay = []
         past_k_avg_sample_interval = []
+        past_k_avg_time_var = []
         pastk_2_past0_tr_mats = []
         # pairwise transformation matrix
         pairwise_t_matrix_list = []
@@ -1334,6 +1357,10 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             past_k_sample_interval.append(ego_dict['past_k_sample_interval']) # ego_dict['past_k_sample_interval'] is np.array(), len=nxk
             past_k_avg_sample_interval.append(ego_dict['avg_sample_interval']) # ego_dict['avg_sample_interval'] is float
             past_k_avg_time_delay.append(ego_dict['avg_time_delay']) # ego_dict['avg_sample_interval'] is float
+            try:
+                past_k_avg_time_var.append(ego_dict['avg_var'])
+            except KeyError:
+                past_k_avg_time_var.append(-1.0)
             # avg_time_delay += ego_dict['avg_time_delay']
             # avg_sample_interval += ego_dict['avg_sample_interval']
             processed_lidar_list.append(ego_dict['processed_lidar']) # different cav_num, ego_dict['processed_lidar'] is list.
@@ -1373,6 +1400,9 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
 
         past_k_avg_time_delay = np.array(past_k_avg_time_delay)
         avg_time_delay = float(sum(past_k_avg_time_delay) / len(past_k_avg_time_delay))
+
+        past_k_avg_time_var = np.array(past_k_avg_time_var)
+        avg_time_var = float(sum(past_k_avg_time_var) / len(past_k_avg_time_var))
 
         # convert to numpy, (B, max_num, 7)
         object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
@@ -1435,7 +1465,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                                    'past_k_time_interval': past_k_time_diff,
                                    'past_k_sample_interval': past_k_sample_interval,
                                    'avg_sample_interval': avg_sample_interval,
-                                   'avg_time_delay': avg_time_delay})
+                                   'avg_time_delay': avg_time_delay,
+                                   'avg_time_var': avg_time_var})
                                 #    'times': time_consume})
         output_dict['ego'].update({'anchor_box':
                 torch.from_numpy(np.array(self.anchor_box))})
@@ -1451,14 +1482,17 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             single_object_bbx_center = []
             single_object_mask = []
             single_object_ids = []
+            single_past_lidar = []
             for i in range(len(batch[0].keys())-1):
                 single_lidar.append(torch.from_numpy(batch[0][i]['single_lidar']))
+                single_past_lidar.append(torch.from_numpy(batch[0][i]['single_past_lidar']))
                 single_object_bbx_center.append(torch.from_numpy(batch[0][i]['single_object_bbx_center']))
                 single_object_ids.append(batch[0][i]['single_object_ids'])
             output_dict['ego'].update({
                 'single_lidar_list': single_lidar,
                 'single_object_bbx_center': single_object_bbx_center,
-                'single_object_ids': single_object_ids
+                'single_object_ids': single_object_ids,
+                'single_past_lidar_list': single_past_lidar
             })
             
         # if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
@@ -1642,7 +1676,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             [k-1] : { ... }
         }
         '''
-        box_results = self.post_processor.single_post_process(m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, self.k)
+        box_results = self.post_processor.single_post_process(m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, self.k, self.num_roi_thres)
         return box_results
 
 # if __name__ == '__main__':   

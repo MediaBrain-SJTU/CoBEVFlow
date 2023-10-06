@@ -31,6 +31,91 @@ from collections import OrderedDict
 import torch
 import numpy as np
 
+def generate_noise(pos_std, rot_std, pos_mean=0, rot_mean=0):
+    """ Add localization error to the 6dof pose
+        Noise includes position (x,y) and rotation (yaw).
+        We use gaussian distribution to generate noise.
+
+    Args:
+
+        pos_std : float 
+            std of gaussian dist, in meter
+
+        rot_std : float
+            std of gaussian dist, in degree
+
+        pos_mean : float
+            mean of gaussian dist, in meter
+
+        rot_mean : float
+            mean of gaussian dist, in degree
+
+    Returns:
+        pose_noise: np.ndarray, [6,]
+            [x, y, z, roll, yaw, pitch]
+    """
+
+    xy = np.random.normal(pos_mean, pos_std, size=(2))
+    yaw = np.random.normal(rot_mean, rot_std, size=(1))
+
+    pose_noise = np.array([xy[0], xy[1], 0, 0, yaw[0], 0])
+
+    return pose_noise
+
+def get_past_k_pairwise_transformation2ego(past_k_lidar_pose, noise_level, k=3, max_cav=5):
+    """
+    Get transformation matrixes accross different agents to curr ego at all past timestamps.
+
+    Parameters
+    ----------
+    base_data_dict : dict
+        Key : cav id, item: transformation matrix to ego, lidar points.
+    
+    ego_pose : list
+        ego pose
+
+    max_cav : int
+        The maximum number of cav, default 5
+
+    Return
+    ------
+    pairwise_t_matrix : np.array
+        The transformation matrix each cav to curr ego at past k frames.
+        shape: (L, k, 4, 4), L is the max cav number in a scene, k is the num of past frames
+        pairwise_t_matrix[i, j] is T i_to_ego at past_j frame
+    """
+    pos_std = noise_level['pos_std']
+    rot_std = noise_level['rot_std']
+    pos_mean = 0 
+    rot_mean = 0
+    
+    pairwise_t_matrix = np.tile(np.eye(4), (max_cav, k, 1, 1)) # (L, k, 4, 4)
+
+    ego_pose = past_k_lidar_pose[0, 0]
+
+    t_list = []
+
+    # save all transformation matrix in a list in order first.
+    for cav_id in range(past_k_lidar_pose.shape[0]):
+        past_k_poses = []
+        for time_id in range(k):
+            loc_noise = generate_noise(pos_std, rot_std)
+            past_k_poses.append(x_to_world(past_k_lidar_pose[cav_id, time_id].cpu().numpy()+loc_noise))
+        t_list.append(past_k_poses) # Twx
+    
+    ego_pose = x_to_world(ego_pose.cpu().numpy())
+    for i in range(len(t_list)): # different cav
+        if i!=0 :
+            for j in range(len(t_list[i])): # different time
+                # i->j: TiPi=TjPj, Tj^(-1)TiPi = Pj
+                # t_matrix = np.dot(np.linalg.inv(t_list[j]), t_list[i])
+                t_matrix = np.linalg.solve(t_list[i][j], ego_pose)  # Tjw*Twi = Tji
+                pairwise_t_matrix[i, j] = t_matrix
+    pairwise_t_matrix = torch.tensor(pairwise_t_matrix).to(past_k_lidar_pose.device)
+    return pairwise_t_matrix
+
+
+
 class PointPillarWhere2commFlowTwoStage(nn.Module):
     def __init__(self, args):
         super(PointPillarWhere2commFlowTwoStage, self).__init__()
@@ -67,6 +152,11 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         else:
             self.tau = 0
 
+        self.num_roi_thres = -1
+        if 'num_roi_thres' in args.keys():
+            self.num_roi_thres = args['num_roi_thres']
+            print(f'=== num_roi_thres : {self.num_roi_thres} ===')
+
         self.dcn = False
         # if 'dcn' in args:
         #     self.dcn = True
@@ -76,6 +166,12 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         if 'design_mode' in args.keys():
             self.design_mode = args['design_mode']
             print(f'=== design mode : {self.design_mode} ===')
+
+        self.noise_flag = 0
+        if 'noise' in args.keys():
+            self.noise_flag = True
+            self.noise_level = {'pos_std': args['noise']['pos_std'], 'rot_std': args['noise']['rot_std'], 'pos_mean': args['noise']['pos_mean'], 'rot_mean': args['noise']['rot_mean']}
+            print(f'=== noise level : {self.noise_level} ===')
 
         # 用于 single 部分的监督
         self.single_supervise = False
@@ -301,6 +397,11 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
         batch_dict = self.backbone(batch_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
         # N, C, H', W'. [N, 384, 100, 352]
         spatial_features_2d = batch_dict['spatial_features_2d']
+
+        noise_pairwise_t_matrix = None
+        if self.noise_flag and B==1:
+            # noise_level = {'pos_std': 0.5, 'rot_std': 0, 'pos_mean': 0, 'rot_mean': 0}
+            noise_pairwise_t_matrix = get_past_k_pairwise_transformation2ego(data_dict['past_lidar_pose'], self.noise_level, k=self.k, max_cav=5)[:record_len[0]].unsqueeze(0)
         
         # downsample feature to reduce memory
         if self.shrink_flag:
@@ -369,7 +470,8 @@ class PointPillarWhere2commFlowTwoStage(nn.Module):
                     pairwise_t_matrix, 
                     record_frames,
                     self.backbone,
-                    [self.shrink_conv, self.cls_head, self.reg_head])
+                    [self.shrink_conv, self.cls_head, self.reg_head],
+                    None, num_roi_thres= self.num_roi_thres, noise_pairwise_t_matrix=noise_pairwise_t_matrix)
             else: 
                 fused_feature, communication_rates, result_dict, flow_recon_loss = self.rain_fusion(batch_dict['spatial_features'],
                     psm_single,

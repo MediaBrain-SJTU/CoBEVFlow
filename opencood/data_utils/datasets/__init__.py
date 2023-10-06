@@ -31,6 +31,10 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_fl
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_variance import IntermediateFusionDatasetIrregularFlowVariance
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular_multi import IntermediateFusionDatasetDAIRIrregularMulti
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_outage import IntermediateFusionDataset_outage
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_irregular_flow_new import IntermediateFusionDatasetV2XSETFlowNew
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_compensation import IntermediateFusionDatasetV2XSETCompensation
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset import IntermediateFusionDatasetV2XSET
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_singleframe import IntermediateFusionDatasetV2XSETSingleframe
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -60,7 +64,11 @@ __all__ = {
     'IntermediateFusionDatasetDAIRIrregular': IntermediateFusionDatasetDAIRIrregular,
     'IntermediateFusionDatasetDAIRIrregularMulti': IntermediateFusionDatasetDAIRIrregularMulti,
     'IntermediateFusionDatasetIrregularFlowVariance': IntermediateFusionDatasetIrregularFlowVariance,
-    'IntermediateFusionDataset_outage': IntermediateFusionDataset_outage
+    'IntermediateFusionDataset_outage': IntermediateFusionDataset_outage,
+    'IntermediateFusionDatasetV2XSETFlowNew': IntermediateFusionDatasetV2XSETFlowNew,
+    'IntermediateFusionDatasetV2XSETCompensation': IntermediateFusionDatasetV2XSETCompensation,
+    'IntermediateFusionDatasetV2XSET': IntermediateFusionDatasetV2XSET,
+    'IntermediateFusionDatasetV2XSETSingleframe': IntermediateFusionDatasetV2XSETSingleframe
 }
 
 # the final range for evaluation

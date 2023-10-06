@@ -16,6 +16,91 @@ from opencood.models.sub_modules.naive_compress import NaiveCompressor
 # from opencood.models.fuse_modules.where2comm import Where2comm
 from opencood.models.fuse_modules.where2comm_attn import Where2comm
 import torch
+import numpy as np
+from opencood.utils.transformation_utils import tfm_to_pose, x1_to_x2, x_to_world
+
+def generate_noise(pos_std, rot_std, pos_mean=0, rot_mean=0):
+    """ Add localization error to the 6dof pose
+        Noise includes position (x,y) and rotation (yaw).
+        We use gaussian distribution to generate noise.
+
+    Args:
+
+        pos_std : float 
+            std of gaussian dist, in meter
+
+        rot_std : float
+            std of gaussian dist, in degree
+
+        pos_mean : float
+            mean of gaussian dist, in meter
+
+        rot_mean : float
+            mean of gaussian dist, in degree
+
+    Returns:
+        pose_noise: np.ndarray, [6,]
+            [x, y, z, roll, yaw, pitch]
+    """
+
+    xy = np.random.normal(pos_mean, pos_std, size=(2))
+    yaw = np.random.normal(rot_mean, rot_std, size=(1))
+
+    pose_noise = np.array([xy[0], xy[1], 0, 0, yaw[0], 0])
+
+    return pose_noise
+
+def get_pairwise_transformation2ego(lidar_pose, noise_level, max_cav=5):
+    """
+    Get transformation matrixes accross different agents to curr ego at all past timestamps.
+
+    Parameters
+    ----------
+    lidar_pose: np.array [N, k=1, 6]
+    
+    ego_pose : list
+        ego pose
+
+    max_cav : int
+        The maximum number of cav, default 5
+
+    Return
+    ------
+    pairwise_t_matrix : np.array
+        The transformation matrix each cav to curr ego at past k frames.
+        shape: (L, k, 4, 4), L is the max cav number in a scene, k is the num of past frames
+        pairwise_t_matrix[i, j] is T i_to_ego at past_j frame
+    """
+    pos_std = noise_level['pos_std']
+    rot_std = noise_level['rot_std']
+    pos_mean = 0 
+    rot_mean = 0
+    
+    pairwise_t_matrix = np.tile(np.eye(4), (max_cav, max_cav, 1, 1)) # (L, L, 4, 4)
+
+    ego_pose = lidar_pose[0]
+
+    t_list = []
+
+    # save all transformation matrix in a list in order first.
+    for cav_id in range(lidar_pose.shape[0]):
+        loc_noise = generate_noise(pos_std, rot_std)
+        t_list.append(x_to_world(lidar_pose[cav_id].cpu().numpy()+loc_noise)) # Twx
+    
+    ego_pose = x_to_world(ego_pose.cpu().numpy())
+
+    for i in range(len(t_list)):
+        for j in range(len(t_list)):
+            # identity matrix to self
+            if i != j:
+                # i->j: TiPi=TjPj, Tj^(-1)TiPi = Pj
+                # t_matrix = np.dot(np.linalg.inv(t_list[j]), t_list[i])
+                t_matrix = np.linalg.solve(t_list[j], t_list[i])  # Tjw*Twi = Tji
+                pairwise_t_matrix[i, j] = t_matrix
+
+    pairwise_t_matrix = torch.tensor(pairwise_t_matrix).to(lidar_pose.device)
+    return pairwise_t_matrix
+
 
 class PointPillarWhere2comm(nn.Module):
     def __init__(self, args):
@@ -43,20 +128,33 @@ class PointPillarWhere2comm(nn.Module):
             self.compression = True
             self.naive_compressor = NaiveCompressor(256, args['compression'])
 
+        self.noise_flag = 0
+        if 'noise' in args.keys():
+            self.noise_flag = True
+            self.noise_level = {'pos_std': args['noise']['pos_std'], 'rot_std': args['noise']['rot_std'], 'pos_mean': args['noise']['pos_mean'], 'rot_mean': args['noise']['rot_mean']}
+            print(f'=== noise level : {self.noise_level} ===')
+
         self.dcn = False
         # if 'dcn' in args:
         #     self.dcn = True
         #     self.dcn_net = DCNNet(args['dcn'])
 
         # self.fusion_net = TransformerFusion(args['fusion_args'])
-        self.fusion_net = Where2comm(args['fusion_args'])
+        # TODO: 
+        # self.fusion_net = Where2comm(args['fusion_args'])
+        self.rain_fusion = Where2comm(args['fusion_args'])
         self.multi_scale = args['fusion_args']['multi_scale']
 
         if self.shrink_flag:
-            self.cls_head = nn.Conv2d(128 * 2, args['anchor_number'],
+            dim = args['shrink_header']['dim'][0]
+            self.cls_head = nn.Conv2d(int(dim), args['anchor_number'],
                                     kernel_size=1)
-            self.reg_head = nn.Conv2d(128 * 2, 7 * args['anchor_number'],
+            self.reg_head = nn.Conv2d(int(dim), 7 * args['anchor_number'],
                                     kernel_size=1)
+            # self.fused_cls_head = nn.Conv2d(int(dim), args['anchor_number'],
+            #                         kernel_size=1)
+            # self.fused_reg_head = nn.Conv2d(int(dim), 7 * args['anchor_number'],
+            #                         kernel_size=1)
         else:
             self.cls_head = nn.Conv2d(128 * 3, args['anchor_number'],
                                     kernel_size=1)
@@ -114,6 +212,14 @@ class PointPillarWhere2comm(nn.Module):
         batch_dict = self.backbone(batch_dict)
         # N, C, H', W'. [N, 384, 100, 252]
         spatial_features_2d = batch_dict['spatial_features_2d']
+
+        B = record_len.shape[0]
+        if self.noise_flag and B==1:
+            # noise_level = {'pos_std': 0.5, 'rot_std': 0, 'pos_mean': 0, 'rot_mean': 0}
+            noise_pairwise_t_matrix = get_pairwise_transformation2ego(data_dict['lidar_pose'], self.noise_level, max_cav=5).unsqueeze(0)
+            # diff = pairwise_t_matrix - noise_pairwise_t_matrix
+            # print(f'=== diff.max() = {diff.max()} === diff.min() = {diff.min()} ===')
+            pairwise_t_matrix = noise_pairwise_t_matrix
         
         # downsample feature to reduce memory
         if self.shrink_flag:
@@ -137,7 +243,7 @@ class PointPillarWhere2comm(nn.Module):
 
         # print('spatial_features_2d: ', spatial_features_2d.shape)
         if self.multi_scale:
-            fused_feature, communication_rates, result_dict = self.fusion_net(batch_dict['spatial_features'],
+            fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
                                             psm_single,
                                             record_len,
                                             pairwise_t_matrix, 
@@ -156,12 +262,20 @@ class PointPillarWhere2comm(nn.Module):
         # print('fused_feature: ', fused_feature.shape)
         psm = self.cls_head(fused_feature)
         rm = self.reg_head(fused_feature)
+        # psm = self.fused_cls_head(fused_feature)
+        # rm = self.fused_reg_head(fused_feature)
 
         output_dict = {'psm': psm,
                        'rm': rm
                        }
+
+        output_dict.update({'psm_single': psm_single,
+                       'rm_single': rm_single,
+                       'comm_rate': communication_rates
+                       })
+
         output_dict.update(result_dict)
-        
+        '''
         split_psm_single = self.regroup(psm_single, record_len)
         split_rm_single = self.regroup(rm_single, record_len)
         psm_single_v = []
@@ -183,4 +297,5 @@ class PointPillarWhere2comm(nn.Module):
                        'rm_single_i': rm_single_i,
                        'comm_rate': communication_rates
                        })
+        '''
         return output_dict

@@ -1,10 +1,10 @@
 # use it for late fusion / no fusion
 
 name: dair_single_late
-data_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
-root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
-validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+data_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
 noise_setting:
   add_noise: false
@@ -25,6 +25,7 @@ train_params:
 fusion:
   core_method: 'LateFusionDatasetDAIR' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
+    clip_pc: false
     proj_first: True # no matters
 
 # preprocess-related

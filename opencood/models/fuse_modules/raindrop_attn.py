@@ -635,7 +635,7 @@ class raindrop_fuse(nn.Module):
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
         return split_x
 
-    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None):
+    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, noise_pairwise_t_matrix=None):
         """
         Fusion forwarding.
         
@@ -661,6 +661,7 @@ class raindrop_fuse(nn.Module):
         -------
         Fused feature.
         """
+
         _, C, H, W = x.shape
         B, L, K = pairwise_t_matrix.shape[:3]
 
@@ -671,6 +672,13 @@ class raindrop_fuse(nn.Module):
         pairwise_t_matrix[...,1,0] = pairwise_t_matrix[...,1,0] * W / H
         pairwise_t_matrix[...,0,2] = pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
         pairwise_t_matrix[...,1,2] = pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
+
+        if noise_pairwise_t_matrix is not None:
+            noise_pairwise_t_matrix = noise_pairwise_t_matrix[:,:,:,[0, 1],:][:,:,:,:,[0, 1, 3]] 
+            noise_pairwise_t_matrix[...,0,1] = noise_pairwise_t_matrix[...,0,1] * H / W
+            noise_pairwise_t_matrix[...,1,0] = noise_pairwise_t_matrix[...,1,0] * W / H
+            noise_pairwise_t_matrix[...,0,2] = noise_pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
+            noise_pairwise_t_matrix[...,1,2] = noise_pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
 
         if self.multi_scale:
             ups = []
@@ -689,14 +697,14 @@ class raindrop_fuse(nn.Module):
                         batch_time_intervals = self.regroup(time_diffs, record_len, K) # [[2*3], [3*3], ...]
                         _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                         communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
-                        # x = x * communication_masks_tensor
+                        x = x * communication_masks_tensor
                     else:
                         communication_rates = torch.tensor(0).to(x.device)
                 else:
                     if self.communication:
-                        communication_masks_tensor = F.max_pool2d(communication_masks_tensor, kernel_size=2)
+                        communication_masks_tensor = F.max_pool2d(communication_masks_tensor.to(torch.float32), kernel_size=2)
                         # TODO: scale = 1, 2 不加 mask
-                        # x = x * communication_masks_tensor
+                        x = x * communication_masks_tensor
                 
                 ############ 2. Split the confidence map #######################
                 # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]
@@ -710,7 +718,11 @@ class raindrop_fuse(nn.Module):
                     # number of valid agent
                     N = record_len[b]
                     # t_matrix[i, j]-> from i to j
-                    t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
+                    if noise_pairwise_t_matrix is not None:
+                        t_matrix = noise_pairwise_t_matrix[b][:N, 0, :, :] #(N, 2, 3)
+                    else:
+                        t_matrix = pairwise_t_matrix[b][:N, 0, :, :] #(N, 2, 3)
+                    # t_matrix = pairwise_t_matrix[b][:N, :, :, :].view(-1, 2, 3) #(Nxk, 2, 3)
                     node_features = batch_node_features[b]
                     C, H, W = node_features.shape[1:]
                     neighbor_feature = warp_affine_simple(node_features,
@@ -722,13 +734,16 @@ class raindrop_fuse(nn.Module):
                     if self.agg_mode == 'RAIN':
                         # for sensor embedding
                         sensor_dist = -1# (B, H, W)
-                        x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
+                        x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))  
+
                         # # TODO for scale debug
                         # if i==self.num_levels-1:
                         #     x_fuse.append(self.fuse_modules[i](neighbor_feature, sensor_dist, batch_time_intervals[b], self.regroup(communication_masks_tensor, record_len, K)[b]))
                         # else:
                         #     x_fuse.append(neighbor_feature[0])
                     else: # ATTEN, MAX, Transformer
+                        # x_fuse.append(node_features[0])
+                        # print('warning, neighbor losses') # TODO: uncomment
                         x_fuse.append(self.fuse_modules[i](neighbor_feature))
                         # # TODO for scale debug
                         # if i==self.num_levels-1:

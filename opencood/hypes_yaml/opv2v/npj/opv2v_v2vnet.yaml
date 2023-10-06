@@ -1,7 +1,8 @@
-name: OPV2V_npj_v2vnet_w
-root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
-validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
-test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
+name: OPV2V_v2vnet_32ch
+
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 # If you do not want pose noise,
 # set add_noise to false, and delete args.
@@ -13,19 +14,26 @@ noise_setting:
   #   pos_mean: 0
   #   rot_mean: 0
 
+exp_name: ""
+num_sweep_frames: &past_k 1
+
+binomial_n: 10
+binomial_p: 0
+is_no_shift: true
+is_same_sample_interval: false
+
 comm_range: 200
-time_delay: 0
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 1
+  batch_size: &batch_size 2
   epoches: 50
-  eval_freq: 5
+  eval_freq: 1
   save_freq: 1
   max_cav: &max_cav 5
 
 fusion:
-  core_method: 'IntermediateFusionDatasetIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetIrregularSingleframe' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
 

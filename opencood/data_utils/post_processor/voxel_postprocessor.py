@@ -275,7 +275,19 @@ class VoxelPostprocessor(BasePostprocessor):
     Added by Sizhewei @ 2023-04-15
     Generate box results on each cav's past_0 time
     """
-    def single_post_process(self, m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, num_sweeps=2):
+    def bandwidth_filter(self, input, num_box):
+        if input['scores'].shape[0] <= num_box:
+            return input
+        
+        topk_idx = torch.argsort(input['scores'], descending=True)[:num_box]
+        output = {}
+        output['scores'] = input['scores'][topk_idx]
+        output['pred_box_3dcorner_tensor']  = input['pred_box_3dcorner_tensor'][topk_idx]
+        output['pred_box_center_tensor'] = input['pred_box_center_tensor'][topk_idx]
+
+        return output
+
+    def single_post_process(self, m_single, trans_mat_pastk_2_past0, past_time_diff, anchor_box, num_sweeps=2, num_roi_thres=-1):
         """
         Process the outputs of the model to 2D/3D bounding box.
         Step1: convert each cav's output to bounding box format
@@ -310,6 +322,7 @@ class VoxelPostprocessor(BasePostprocessor):
         }
         """
         self.k = num_sweeps
+        self.num_roi_thres = num_roi_thres
         
         psm_single = m_single['psm_single']
         rm_single = m_single['rm_single']
@@ -433,11 +446,29 @@ class VoxelPostprocessor(BasePostprocessor):
                 #     scores = backup_scores
                 #     pred_box_center_tensor = box_utils.corner_to_center_torch(pred_box_3dcorner_tensor, self.params['order'])
 
-                box_results[i].update({
-                    'pred_box_3dcorner_tensor': pred_box_3dcorner_tensor, 
-                    'pred_box_center_tensor': pred_box_center_tensor,
-                    'scores': scores
-                })
+                try:
+                    self.num_roi_thres = self.num_roi_thres
+                except KeyError:
+                    print('Note! There is no num_roi_thres in the config file.')
+                    self.num_roi_thres = -1
+                if self.num_roi_thres != -1:
+                    original_results = {
+                        'pred_box_3dcorner_tensor': pred_box_3dcorner_tensor, 
+                        'pred_box_center_tensor': pred_box_center_tensor,
+                        'scores': scores
+                    }
+                    sorted_box_results = self.bandwidth_filter(original_results, self.num_roi_thres)
+                    box_results[i].update({
+                        'pred_box_3dcorner_tensor': sorted_box_results['pred_box_3dcorner_tensor'], 
+                        'pred_box_center_tensor': sorted_box_results['pred_box_center_tensor'],
+                        'scores': sorted_box_results['scores']
+                    })
+                else: 
+                    box_results[i].update({
+                        'pred_box_3dcorner_tensor': pred_box_3dcorner_tensor, 
+                        'pred_box_center_tensor': pred_box_center_tensor,
+                        'scores': scores
+                    })
 
             else:
                 box_results[i].update({

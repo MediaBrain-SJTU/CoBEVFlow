@@ -170,13 +170,33 @@ def load_saved_model_diff(saved_path, model, finetune_flag=False):
                 eval(file_list[0].split("/")[-1].rstrip(".pth").lstrip("net_epoch_bestval_at")))
         trained_model_dict = torch.load(file_list[0] , map_location='cpu')
 
+        # TODO: uncomment lines below to introduce v2xvit v2-based pretrained model
+        # old_trained_model_dict = torch.load(file_list[0] , map_location='cpu')
+        # trained_model_dict = {}
+        # for key, value in old_trained_model_dict.items():
+        #     if 'fusion_net.fusion_net.' in key:
+        #         new_key = key.replace('fusion_net.fusion_net.', 'fusion_net.')
+        #     else:
+        #         new_key = key
+        #     trained_model_dict[new_key] = value
+
+        # TODO: uncomment lines below to introduce disconet v2-based pretrained model
+        # old_trained_model_dict = torch.load(file_list[0] , map_location='cpu')
+        # trained_model_dict = {}
+        # for key, value in old_trained_model_dict.items():
+        #     if 'fusion_net.pixel_weight_layer.' in key:
+        #         new_key = key.replace('fusion_net.pixel_weight_layer.', 'pixel_weight_layer.')
+        #     else:
+        #         new_key = key
+        #     trained_model_dict[new_key] = value
+
         ######## finetune header
         # if finetune_flag:
-        #     finetune_split_name = ['cls_head.weight', 'cls_head.bias', 'reg_head.weight', 'reg_head.bias']
-        #     for k in finetune_split_name:
-        #         trained_model_dict.update({
-        #             'fused_'+k: trained_model_dict[k]})
-        #############################
+        # finetune_split_name = ['cls_head.weight', 'cls_head.bias', 'reg_head.weight', 'reg_head.bias']
+        # for k in finetune_split_name:
+        #     trained_model_dict.update({
+        #         'fused_'+k: trained_model_dict[k]})
+    #############################
 
         diff_keys = {k:v for k, v in trained_model_dict.items() if k not in model.state_dict()}
         if diff_keys:

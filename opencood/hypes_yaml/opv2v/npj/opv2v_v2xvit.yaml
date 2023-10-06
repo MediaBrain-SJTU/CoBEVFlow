@@ -1,8 +1,8 @@
 name: OPV2V_v2xvit_32ch
 
-root_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/train"
-validate_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/validate"
-test_dir: "/GPFS/rhome/yifanlu/workspace/dataset/OPV2V/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: false

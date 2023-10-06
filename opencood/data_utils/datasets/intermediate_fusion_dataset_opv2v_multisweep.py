@@ -117,6 +117,12 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                                os.path.isdir(os.path.join(scenario_folder, x))])
             assert len(cav_list) > 0
 
+            # roadside unit data's id is always negative, so here we want to
+            # make sure they will be in the end of the list as they shouldn't
+            # be ego vehicle.
+            if int(cav_list[0]) < 0:
+                cav_list = cav_list[1:] + [cav_list[0]]
+                
             # loop over all CAV data
             for (j, cav_id) in enumerate(cav_list):
                 if j > self.max_cav - 1:
@@ -132,6 +138,11 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
                     sorted([os.path.join(cav_path, x)
                             for x in os.listdir(cav_path) if
                             x.endswith('.yaml')])
+                if len(yaml_files)==0:
+                    yaml_files = \
+                        sorted([os.path.join(cav_path, x)
+                                for x in os.listdir(cav_path) if
+                                x.endswith('.json')])
                 timestamps = self.extract_timestamps(yaml_files)	
 
                 for timestamp in timestamps:

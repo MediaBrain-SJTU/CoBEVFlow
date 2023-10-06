@@ -1,9 +1,9 @@
 name: rain_thres_0.07_k_5_swin_w_single  # TODO:
 
 
-root_dir: "/DB/public/OPV2V_irregular_npy/train/"
-validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
-test_dir: "/DB/public/OPV2V_irregular_npy/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False
@@ -25,7 +25,7 @@ is_same_sample_interval: true     # TODO:
 is_single_pre_trained:
   pre_train_flag: False             # TODO:
   pre_train_fix: False              # TODO:
-  pre_train_path: '/DB/data/sizhewei/logs/where2comm_irr_no_shift_pretrain'
+  pre_train_path: '/remote-home/share/sizhewei/logs/where2comm_irr_no_shift_pretrain'
   pre_train_epoch: 17
 
 comm_range: 1000
@@ -122,7 +122,7 @@ model:
       kernal_size: [ 3 ]
       stride: [ 1 ]
       padding: [ 1 ]
-      dim: [ 64 ]                      # TODO:
+      dim: [ 64 ]                       # TODO: multi_scale 用 256，否则用 64
       input_dim: 384 # 128 * 3
 
     with_compensation: True             # TODO:

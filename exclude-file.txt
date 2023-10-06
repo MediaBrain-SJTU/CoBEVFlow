@@ -1,5 +1,0 @@
-.*
-__pycache__
-backup
-*/__pycache__
-viz_out

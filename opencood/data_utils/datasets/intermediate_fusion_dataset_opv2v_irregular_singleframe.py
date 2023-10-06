@@ -237,7 +237,7 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
                     # we regard the agent with the minimum id as the ego
                     self.scenario_database[i][cav_id]['ego'] = True
                     # num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
-                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k
+                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k * 3 # TODO:
                     if not self.len_record:
                         self.len_record.append(num_ego_timestamps)
                     else:
@@ -371,7 +371,7 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
         curr_timestamp_idx = idx if scenario_index == 0 else \
                         idx - self.len_record[scenario_index - 1]
-        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k * 3 # TODO:
         
         # load files for all CAVs
         for cav_id, cav_content in scenario_database.items():
@@ -1397,7 +1397,8 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
 
             # save all transformation matrix in a list in order first.
             for cav_id, cav_content in base_data_dict.items():
-                lidar_pose = cav_content['curr']['params']['lidar_pose']
+                # lidar_pose = cav_content['curr']['params']['lidar_pose']
+                lidar_pose = cav_content['past_k'][0]['params']['lidar_pose']
                 t_list.append(x_to_world(lidar_pose))  # Twx
 
             for i in range(len(t_list)):

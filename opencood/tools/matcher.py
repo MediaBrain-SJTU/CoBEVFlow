@@ -413,7 +413,8 @@ class Matcher(nn.Module):
     def forward(self, input_dict, feature=None, shape_list=None, batch_id=0, viz_flag=False):
         self.viz_flag = viz_flag
         if self.fusion=='box':
-            return self.forward_box(input_dict, batch_id)
+            # return self.forward_box(input_dict, batch_id)
+            return self.forward_box_w_dir(input_dict, batch_id)
         elif self.fusion=='feature':
             return self.forward_feature(input_dict, feature)
         # elif self.fusion=='flow':
@@ -520,6 +521,134 @@ class Matcher(nn.Module):
             })
 
         return input_dict
+
+    def forward_box_w_dir(self, input_dict, batch_id):
+        """ Performs the matching
+        input_dict: 
+            {
+                'ego' : {
+                    'past_k_time_diff' : 
+                    [0] {
+                        pred_box_3dcorner_tensor: The prediction bounding box tensor after NMS. n, 8, 3
+                        pred_box_center_tensor : n, 7
+                        scores: (n, )
+                    }
+                    ... 
+                    [k-1]
+                    ['comp']{
+                        pred_box_3dcorner_tensor: The prediction bounding box tensor after NMS. n, 8, 3
+                        pred_box_center_tensor : n, 7
+                        scores: (n, )
+                    }
+                }
+                cav_id {}
+            }
+        """
+
+        # output_dict_past = {}
+        # output_dict_current = {}
+        pred_bbox_list = []
+        for cav, cav_content in input_dict.items():
+            if cav == 'ego':
+                estimated_box_center_current = cav_content[0]['pred_box_center_tensor']
+                estimated_box_3dcorner_current = cav_content[0]['pred_box_3dcorner_tensor']
+            else:
+                coord_past1 = cav_content[0]
+                coord_past2 = cav_content[1]
+
+                center_points_past1 = coord_past1['pred_box_center_tensor'][:,:2]
+                center_points_past2 = coord_past2['pred_box_center_tensor'][:,:2]
+
+                cost_mat_center = torch.zeros((center_points_past2.shape[0], center_points_past1.shape[0])).to(center_points_past1.device)
+
+                center_points_past1_repeat = center_points_past1.unsqueeze(0).repeat(center_points_past2.shape[0], 1, 1)
+                center_points_past2_repeat = center_points_past2.unsqueeze(1).repeat(1, center_points_past1.shape[0], 1)
+
+                delta_mat = center_points_past1_repeat - center_points_past2_repeat
+
+                angle_mat = torch.atan2(delta_mat[:,:,1], delta_mat[:,:,0]) # [num_cav_past2,num_cav_past1]
+
+                coord_past2_angle_reverse = coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0]).clone()
+
+                visible_mat = torch.where((torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) < 0.785) | (torch.abs(angle_mat-coord_past2['pred_box_center_tensor'][:,6].unsqueeze(1).repeat(1, center_points_past1.shape[0])) > 5.495) , 1, 0) # [num_cav_past2,num_cav_past1]
+
+                cost_mat_center = torch.cdist(center_points_past2, center_points_past1) # [num_cav_past2,num_cav_past1]
+
+                visible_mat = torch.where(cost_mat_center<0.5, 1, visible_mat)
+
+                tmp_thre = torch.tensor(1000.).to(torch.float32).to(visible_mat.device)
+                cost_mat_center = torch.where(visible_mat==1, cost_mat_center, tmp_thre)
+
+                if cost_mat_center.shape[1] == 0 or cost_mat_center.shape[0] == 0:
+                    estimated_box_center_current = cav_content[0]['pred_box_center_tensor']
+                    estimated_box_3dcorner_current = cav_content[0]['pred_box_3dcorner_tensor']
+
+                else:
+                    match = torch.min(cost_mat_center, dim=1)
+                    match_to_keep = torch.where(match[0] < 5)
+
+                    past2_ids = match_to_keep[0]
+                    past1_ids = match[1][match_to_keep[0]]
+
+                    coord_past2_angle_reverse += 3.1415926
+                    coord_past2_angle_reverse[coord_past2_angle_reverse>3.1415926] -= 6.2831852
+
+                    left_past2_id = [n for n in range(cost_mat_center.shape[0]) if n not in past2_ids]
+                    left_past1_id = [n for n in range(cost_mat_center.shape[1]) if n not in past1_ids]
+
+                    angle_mat_left = angle_mat[left_past2_id, :][:, left_past1_id]
+
+                    coord_past2_angle_reverse_left = coord_past2_angle_reverse[left_past2_id, :][: ,left_past1_id]
+
+                    visible_mat_left = torch.where((torch.abs(angle_mat_left-coord_past2_angle_reverse_left) < 0.785) | (torch.abs(angle_mat_left-coord_past2_angle_reverse_left) > 5.495) , 1, 0) # [num_cav_past2,num_cav_past1]
+
+                    cost_mat_center_left = torch.cdist(center_points_past2[left_past2_id], center_points_past1[left_past1_id]) # [num_cav_past2,num_cav_past1]
+                    # cost_mat_center_left = cost_mat_center[left_past2_id, :][:, left_past1_id]
+
+                    visible_mat_left = torch.where(cost_mat_center_left<0.5, 1, visible_mat_left)
+                    cost_mat_center_left = torch.where(visible_mat_left==1, cost_mat_center_left, tmp_thre)
+
+                    if cost_mat_center_left.shape[1] != 0 and cost_mat_center_left.shape[0] != 0:
+                        match_left = torch.min(cost_mat_center_left, dim=1)
+                        match_to_keep_left = torch.where(match_left[0] < 5)
+
+                        if match_to_keep_left[0].shape[0] != 0:
+                            past2_ids_left = match_to_keep_left[0]
+                            past2_ids = torch.cat([past2_ids, torch.tensor(left_past2_id)[past2_ids_left].to(past2_ids.device)])
+                            past1_ids_left = match_left[1][match_to_keep_left[0]]
+                            past1_ids = torch.cat([past1_ids, torch.tensor(left_past1_id)[past1_ids_left].to(past1_ids.device)])
+
+                    matched_past2 = center_points_past2[past2_ids]
+                    matched_past1 = center_points_past1[past1_ids]
+
+                    time_length = cav_content['past_k_time_diff'][0] - cav_content['past_k_time_diff'][1]
+                    if time_length == 0:
+                        time_length = 1
+                    
+                    flow = (matched_past1 - matched_past2) / time_length
+
+                    # if flow.shape[0] != 0:
+                    #     print(f"max flow is {flow.max()}")
+
+                    estimate_position = matched_past1 + flow*(0-cav_content['past_k_time_diff'][0]) 
+
+                    # from copy import deepcopy
+                    # estimated_box_center_current = deepcopy(coord_past1['pred_box_center_tensor'].detach())
+                    estimated_box_center_current = coord_past1['pred_box_center_tensor'].detach().clone()
+                    estimated_box_center_current[past1_ids, :2] = estimate_position  # n, 7
+
+                    estimated_box_3dcorner_current = box_utils.boxes_to_corners_3d(estimated_box_center_current, order='hwl')
+
+            # debug use, update input dict adding estimated frame at cav-past0
+            input_dict[cav]['comp'] = {}
+            input_dict[cav]['comp'].update({
+                'pred_box_center_tensor': estimated_box_center_current,
+                'pred_box_3dcorner_tensor': estimated_box_3dcorner_current,
+                'scores': cav_content[0]['scores']
+            })
+
+        return input_dict
+
 
     def forward_feature(self, input_dict, features_dict):
         """
@@ -1075,6 +1204,7 @@ class Matcher(nn.Module):
         flow_map_list = []
         reserved_mask = []
         if self.viz_flag:
+            original_reserved_mask = []
             matched_idx_list = []
             compensated_results_list = []
         for cav, cav_content in input_dict.items():
@@ -1086,6 +1216,8 @@ class Matcher(nn.Module):
                 mask = torch.ones(1, C, H, W).to(shape_list)
                 flow_map_list.append(basic_warp_mat)
                 reserved_mask.append(mask)
+                if self.viz_flag:
+                    original_reserved_mask.append(mask)
             else:
                 coord_past1 = cav_content[0]
                 coord_past2 = cav_content[1]
@@ -1123,6 +1255,7 @@ class Matcher(nn.Module):
                     if self.viz_flag:
                         matched_idx_list.append(torch.stack([torch.tensor([]), torch.tensor([])], dim=1).to(shape_list.device))
                         compensated_results_list.append(torch.zeros(0, 8, 3).to(shape_list.device))
+                        original_reserved_mask.append(mask)
                     continue
 
                 match = torch.min(cost_mat_center, dim=1)
@@ -1215,7 +1348,11 @@ class Matcher(nn.Module):
                     print(f"===saved, max flow is {flow.max()}===")
                 ############
                 
-                flow_map, mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
+                if self.viz_flag:
+                    flow_map, mask, single_ori_mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
+                    original_reserved_mask.append(single_ori_mask)
+                else:
+                    flow_map, mask = self.generate_flow_map(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
                 flow_map_list.append(flow_map)
                 reserved_mask.append(mask)
                 continue
@@ -1224,7 +1361,8 @@ class Matcher(nn.Module):
         reserved_mask = torch.concat(reserved_mask, dim=0)  # [N_b, C, H, W]
 
         if self.viz_flag:
-            return final_flow_map, reserved_mask, matched_idx_list, compensated_results_list
+            original_reserved_mask = torch.concat(original_reserved_mask, dim=0)  # [N_b, C, H, W]
+            return final_flow_map, reserved_mask, original_reserved_mask, matched_idx_list, compensated_results_list
         return final_flow_map, reserved_mask
         '''
                 updated_spatial_features_2d = self.feature_warp(features_dict[cav]['spatial_features_2d'][0], selected_box_3dcorner_past0, flow, scale=1.25)
@@ -1356,8 +1494,13 @@ class Matcher(nn.Module):
         for cav in range(num_cav):
             reserved_area[:,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = 1
 
+        if self.viz_flag:
+            single_reserved_area = torch.zeros_like(reserved_area)
+            for cav in range(num_cav):
+                single_reserved_area[:,y_min_fid_ori[cav]:y_max_fid_ori[cav],x_min_fid_ori[cav]:x_max_fid_ori[cav]] = 1
+            return basic_warp_mat, reserved_area.unsqueeze(0), single_reserved_area.unsqueeze(0)
+
         return basic_warp_mat, reserved_area.unsqueeze(0)
-        
         '''
         ##################################### below is not used
         final_feature = F.grid_sample(feature.unsqueeze(0), basic_warp_mat, align_corners=align_corners)[0]

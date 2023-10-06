@@ -1,9 +1,9 @@
 # learnable flow
 name: where2comm_flow_debug
 
-root_dir: "/DB/public/OPV2V_irregular_npy/train/"
-validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
-test_dir: "/DB/public/OPV2V_irregular_npy/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False
@@ -174,7 +174,7 @@ model:
       num_filters: *num_filters
 
 loss:
-  core_method: flowmap_loss # point_pillar_tc_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0

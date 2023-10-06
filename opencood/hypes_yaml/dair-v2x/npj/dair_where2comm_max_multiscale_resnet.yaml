@@ -1,8 +1,8 @@
 name: dair_where2comm_max_multiscale_resnet
-data_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
-root_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
-validate_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-test_dir: "/GPFS/rhome/quanhaoli/workspace/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+data_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 
 noise_setting:
   add_noise: False
@@ -12,7 +12,7 @@ noise_setting:
     pos_mean: 0
     rot_mean: 0
 
-comm_range: 100
+comm_range: 100000
 num_sweep_frames: &past_k 1
 time_delay: 0
 
@@ -23,10 +23,10 @@ train_params:
   eval_freq: 2
   save_freq: 2
   max_cav: &max_cav 2
-
+  supervise_single_flag: true
 
 fusion:
-  core_method: 'IntermediateFusionDatasetDAIR' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDatasetDAIRIrregular' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
   args:
     proj_first: false
     clip_pc: false
@@ -75,7 +75,7 @@ postprocess:
 
 # model related
 model:
-  core_method: point_pillar_where2comm
+  core_method: point_pillar_where2comm_attn
   
   args:
     voxel_size: *voxel_size
@@ -94,7 +94,7 @@ model:
       num_features: 64
 
     base_bev_backbone:
-      resnet: false
+      resnet: true
       layer_nums: &layer_nums [3, 4, 5]
       layer_strides: [2, 2, 2]
       num_filters: &num_filters [64, 128, 256]
@@ -117,7 +117,7 @@ model:
     #   kernel_size : [3]
     #   n_blocks: 1
 
-    fusion_args:
+    rain_model: #fusion_args:
       voxel_size: *voxel_size
       downsample_rate: 1
       in_channels: 256
@@ -125,6 +125,7 @@ model:
       dropout_rate: 0
       only_attention: true
       communication:
+        round: 1
         thre: 0.01
         gaussian_smooth:
           k_size: 5
@@ -132,13 +133,13 @@ model:
       agg_operator:
         mode: 'MAX'
         feature_dim: 256
-      multi_scale: false
+      multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 
 
 loss:
-  core_method: point_pillar_loss
+  core_method: point_pillar_tc_loss
   args:
     cls_weight: 1.0
     reg: 2.0

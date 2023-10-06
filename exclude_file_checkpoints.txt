@@ -1,4 +1,0 @@
-backup
-vis_*
-eval_*
-events*

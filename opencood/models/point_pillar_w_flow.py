@@ -10,6 +10,7 @@ import torch.nn as nn
 from opencood.models.sub_modules.pillar_vfe import PillarVFE
 from opencood.models.sub_modules.point_pillar_scatter import PointPillarScatter
 from opencood.models.sub_modules.base_bev_backbone import BaseBEVBackbone
+from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
 
 class PointPillarWFlow(nn.Module):
@@ -22,7 +23,11 @@ class PointPillarWFlow(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
-        self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
+            self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
+        else:
+            self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
         
         self.out_channel = sum(args['base_bev_backbone']['num_upsample_filter'])
 

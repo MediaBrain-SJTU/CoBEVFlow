@@ -1,8 +1,8 @@
 name: where2comm_max_multiscale_resnet_64ch
 
-root_dir: "/DB/public/OPV2V_w_npy/train/"
-validate_dir: "/DB/public/OPV2V_w_npy/validate"
-test_dir: "/DB/public/OPV2V_w_npy/test"
+root_dir: "/remote-home/share/OPV2V_w_npy/train"
+validate_dir: "/remote-home/share/OPV2V_w_npy/validate"
+test_dir: "/remote-home/share/OPV2V_w_npy/test"
 
 noise_setting:
   add_noise: False
@@ -25,7 +25,7 @@ comm_range: 200
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 2
+  batch_size: &batch_size 4
   epoches: 30
   eval_freq: 2
   save_freq: 2
@@ -115,18 +115,10 @@ model:
       kernal_size: [ 3 ]
       stride: [ 1 ]
       padding: [ 1 ]
-      dim: [ 256 ]            # TODO:
-      input_dim: 384 # 128 * 3
+      dim: [ 256 ]
+      input_dim: 384 # 128 * 3    
     
-    # dcn:
-    #   in_channels: [384]
-    #   out_channels: [256]
-    #   stride: [1]
-    #   padding: [1]
-    #   kernel_size : [3]
-    #   n_blocks: 1
-
-    rain_model # fusion_args: 
+    rain_model: # fusion_args:
       voxel_size: *voxel_size
       downsample_rate: 1
       in_channels: 256
@@ -147,7 +139,7 @@ model:
         # with_spe: true
         # with_scm: true
 
-      multi_scale: True
+      multi_scale: true
       layer_nums: *layer_nums
       num_filters: *num_filters
 

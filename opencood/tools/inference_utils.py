@@ -124,7 +124,7 @@ def box_flow_update(box_results, batch_id=0):
         
     """
     from opencood.tools.matcher import Matcher
-    matcher = Matcher(1, 1)
+    matcher = Matcher('box', 1, 1)
     updated_box = matcher(box_results, batch_id=batch_id)
 
     return updated_box
@@ -154,12 +154,18 @@ def inference_intermediate_fusion_flow_module(batch_data, model, dataset, viz_bb
     pred_box_tensor, pred_score, gt_box_tensor = \
         dataset.post_process(batch_data,
                              output_dict)
-    
-    if viz_bbx_flag:
-        single_detection_bbx = output_dict['ego']['single_detection_bbx']
-        matched_idx_list = output_dict['ego']['matched_idx_list']
-        compensated_results_list = output_dict['ego']['compensated_results_list']
-        return pred_box_tensor, pred_score, gt_box_tensor, single_detection_bbx, matched_idx_list, compensated_results_list
+    # TODO: uncomment
+    # if viz_bbx_flag:
+    #     single_detection_bbx = output_dict['ego']['single_detection_bbx']
+    #     matched_idx_list = output_dict['ego']['matched_idx_list']
+    #     compensated_results_list = output_dict['ego']['compensated_results_list']
+    #     single_updated_feature = output_dict['ego']['single_updated_feature']
+    #     single_original_feature = output_dict['ego']['single_original_feature']
+    #     single_flow_map = output_dict['ego']['single_flow_map']
+    #     single_reserved_mask = output_dict['ego']['single_reserved_mask']
+    #     single_original_reserved_mask = output_dict['ego']['single_original_reserved_mask']
+
+    #     return pred_box_tensor, pred_score, gt_box_tensor, single_detection_bbx, matched_idx_list, compensated_results_list, single_updated_feature, single_original_feature, single_flow_map, single_reserved_mask, single_original_reserved_mask
 
     return pred_box_tensor, pred_score, gt_box_tensor
 

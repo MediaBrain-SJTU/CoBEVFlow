@@ -1,8 +1,9 @@
-name: where2comm_flow
+# learnable flow
+name: where2comm_flow_debug
 
-root_dir: "/DB/public/OPV2V_irregular_npy/train/"
-validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
-test_dir: "/DB/public/OPV2V_irregular_npy/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False
@@ -13,10 +14,10 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 2
+num_sweep_frames: &past_k 3
 
 binomial_n: 10
-binomial_p: 0
+binomial_p: 0.3
 is_no_shift: true
 is_same_sample_interval: false
 
@@ -30,7 +31,7 @@ comm_range: 200
 
 yaml_parser: "load_point_pillar_params"
 train_params:
-  batch_size: &batch_size 2 # TODO: 调整batch_size
+  batch_size: &batch_size 1 # TODO: 调整batch_size
   epoches: 30
   eval_freq: 1
   save_freq: 1
@@ -96,7 +97,7 @@ model:
     anchor_number: *achor_num
     max_cav: *max_cav
     compression: 0 # compression rate
-    backbone_fix: false
+    backbone_fix: True
     num_sweep_frames: *past_k
 
     pillar_vfe:

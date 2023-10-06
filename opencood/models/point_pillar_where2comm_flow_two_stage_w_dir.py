@@ -32,6 +32,90 @@ from collections import OrderedDict
 import torch
 import numpy as np
 
+def generate_noise(pos_std, rot_std, pos_mean=0, rot_mean=0):
+    """ Add localization error to the 6dof pose
+        Noise includes position (x,y) and rotation (yaw).
+        We use gaussian distribution to generate noise.
+
+    Args:
+
+        pos_std : float 
+            std of gaussian dist, in meter
+
+        rot_std : float
+            std of gaussian dist, in degree
+
+        pos_mean : float
+            mean of gaussian dist, in meter
+
+        rot_mean : float
+            mean of gaussian dist, in degree
+
+    Returns:
+        pose_noise: np.ndarray, [6,]
+            [x, y, z, roll, yaw, pitch]
+    """
+
+    xy = np.random.normal(pos_mean, pos_std, size=(2))
+    yaw = np.random.normal(rot_mean, rot_std, size=(1))
+
+    pose_noise = np.array([xy[0], xy[1], 0, 0, yaw[0], 0])
+
+    return pose_noise
+
+def get_past_k_pairwise_transformation2ego(past_k_lidar_pose, noise_level, k=3, max_cav=5):
+    """
+    Get transformation matrixes accross different agents to curr ego at all past timestamps.
+
+    Parameters
+    ----------
+    base_data_dict : dict
+        Key : cav id, item: transformation matrix to ego, lidar points.
+    
+    ego_pose : list
+        ego pose
+
+    max_cav : int
+        The maximum number of cav, default 5
+
+    Return
+    ------
+    pairwise_t_matrix : np.array
+        The transformation matrix each cav to curr ego at past k frames.
+        shape: (L, k, 4, 4), L is the max cav number in a scene, k is the num of past frames
+        pairwise_t_matrix[i, j] is T i_to_ego at past_j frame
+    """
+    pos_std = noise_level['pos_std']
+    rot_std = noise_level['rot_std']
+    pos_mean = 0 
+    rot_mean = 0
+    
+    pairwise_t_matrix = np.tile(np.eye(4), (max_cav, k, 1, 1)) # (L, k, 4, 4)
+
+    ego_pose = past_k_lidar_pose[0, 0]
+
+    t_list = []
+
+    # save all transformation matrix in a list in order first.
+    for cav_id in range(past_k_lidar_pose.shape[0]):
+        past_k_poses = []
+        for time_id in range(k):
+            loc_noise = generate_noise(pos_std, rot_std)
+            past_k_poses.append(x_to_world(past_k_lidar_pose[cav_id, time_id].cpu().numpy()+loc_noise))
+        t_list.append(past_k_poses) # Twx
+    
+    ego_pose = x_to_world(ego_pose.cpu().numpy())
+    for i in range(len(t_list)): # different cav
+        if i!=0 :
+            for j in range(len(t_list[i])): # different time
+                # i->j: TiPi=TjPj, Tj^(-1)TiPi = Pj
+                # t_matrix = np.dot(np.linalg.inv(t_list[j]), t_list[i])
+                t_matrix = np.linalg.solve(t_list[i][j], ego_pose)  # Tjw*Twi = Tji
+                pairwise_t_matrix[i, j] = t_matrix
+    pairwise_t_matrix = torch.tensor(pairwise_t_matrix).to(past_k_lidar_pose.device)
+    return pairwise_t_matrix
+
+
 class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
     def __init__(self, args):
         super(PointPillarWhere2commFlowTwoStageWDir, self).__init__()
@@ -79,6 +163,17 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
             self.design_mode = args['design_mode']
             print(f'=== design mode : {self.design_mode} ===')
 
+        self.noise_flag = 0
+        if 'noise' in args.keys():
+            self.noise_flag = True
+            self.noise_level = {'pos_std': args['noise']['pos_std'], 'rot_std': args['noise']['rot_std'], 'pos_mean': args['noise']['pos_mean'], 'rot_mean': args['noise']['rot_mean']}
+            print(f'=== noise level : {self.noise_level} ===')
+
+        self.num_roi_thres = -1
+        if 'num_roi_thres' in args.keys():
+            self.num_roi_thres = args['num_roi_thres']
+            print(f'=== num_roi_thres : {self.num_roi_thres} ===')
+
         # 用于 single 部分的监督
         self.single_supervise = False
         if 'with_compensation' in args and args['with_compensation']:
@@ -113,7 +208,9 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         if 'dir_args' in args.keys():
             self.use_dir = True
             self.dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
-                                  kernel_size=1) # BIN_NUM = 2， # 384
+                                    kernel_size=1) # BIN_NUM = 2， # 384
+            self.fused_dir_head = nn.Conv2d(128 * 2, args['dir_args']['num_bins'] * args['anchor_number'],
+                                    kernel_size=1)
         else:
             self.use_dir = False
 
@@ -201,6 +298,16 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         split_x = torch.tensor_split(x, cum_sum_len[:-1].cpu())
         return split_x
 
+    def bandwidth_filter(self, input, num_box):
+        topk_idx = torch.argsort(input['scores'], descending=True)[:num_box]
+
+        output = {}
+        output['scores'] = input['scores'][topk_idx]
+        output['pred_box_3dcorner_tensor']  = input['pred_box_3dcorner_tensor'][topk_idx]
+        output['pred_box_center_tensor'] = input['pred_box_center_tensor'][topk_idx]
+
+        return output
+
     def generate_box_flow(self, data_dict, pred_dict, dataset, shape_list, device): 
         """
         data_dict : 
@@ -229,6 +336,7 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         reserved_mask_list = []
 
         if self.viz_bbx_flag:
+            ori_reserved_mask_list = []
             single_box_results = None
         
         # for all batches
@@ -277,7 +385,8 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
             
             # 2. generate box flow in one batch
             if self.viz_bbx_flag:
-                box_flow_map, mask, matched_idx_list, compensated_results_list = self.matcher(box_results, shape_list=shape_list, viz_flag=self.viz_bbx_flag)
+                box_flow_map, mask, ori_mask, matched_idx_list, compensated_results_list = self.matcher(box_results, shape_list=shape_list, viz_flag=self.viz_bbx_flag)
+                ori_reserved_mask_list.append(ori_mask)
             else:
                 box_flow_map, mask = self.matcher(box_results, shape_list=shape_list, viz_flag=self.viz_bbx_flag)
             box_flow_map_list.append(box_flow_map)
@@ -290,7 +399,8 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         final_reserved_mask = torch.concat(reserved_mask_list, dim=0)
 
         if self.viz_bbx_flag:
-            return final_flow_map, final_reserved_mask, single_box_results, matched_idx_list, compensated_results_list
+            ori_reserved_mask = torch.concat(ori_reserved_mask_list, dim=0)
+            return final_flow_map, final_reserved_mask, ori_reserved_mask, single_box_results, matched_idx_list, compensated_results_list
 
         return final_flow_map, final_reserved_mask
 
@@ -321,6 +431,11 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         spatial_features_2d = batch_dict['spatial_features_2d']
         
         shape_list = torch.tensor(batch_dict['spatial_features'].shape[-3:]).to(pairwise_t_matrix.device)
+
+        noise_pairwise_t_matrix = None
+        if self.noise_flag and B==1:
+            # noise_level = {'pos_std': 0.5, 'rot_std': 0, 'pos_mean': 0, 'rot_mean': 0}
+            noise_pairwise_t_matrix = get_past_k_pairwise_transformation2ego(data_dict['past_lidar_pose'], self.noise_level, k=self.k, max_cav=5)[:record_len[0]].unsqueeze(0)
 
         # downsample feature to reduce memory
         if self.shrink_flag:
@@ -364,7 +479,7 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
                     'dm_single_list': self.regroup(dm_single, record_len, k)
                 })
             if self.viz_bbx_flag:
-                box_flow_map, reserved_mask, single_detection_bbx, matched_idx_list, compensated_results_list = self.generate_box_flow(data_dict, single_output, dataset, shape_list, psm_single.device)
+                box_flow_map, reserved_mask, ori_reserved_mask, single_detection_bbx, matched_idx_list, compensated_results_list = self.generate_box_flow(data_dict, single_output, dataset, shape_list, psm_single.device)
             else:
                 box_flow_map, reserved_mask = self.generate_box_flow(data_dict, single_output, dataset, shape_list, psm_single.device)
 
@@ -381,7 +496,8 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         # rain attention:
         if self.multi_scale:
             if self.design_mode == 0 or self.design_mode==5:
-                fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                if self.viz_bbx_flag:
+                    fused_feature, communication_rates, result_dict, single_updated_feature = self.rain_fusion(batch_dict['spatial_features'],
                     psm_single,
                     record_len,
                     pairwise_t_matrix, 
@@ -389,7 +505,17 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
                     self.backbone,
                     [self.shrink_conv, self.cls_head, self.reg_head],
                     box_flow=box_flow_map, reserved_mask=reserved_mask,
-                    flow_gt=flow_gt)
+                    flow_gt=flow_gt, viz_bbx_flag=self.viz_bbx_flag)
+                else:
+                    fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
+                        psm_single,
+                        record_len,
+                        pairwise_t_matrix, 
+                        record_frames,
+                        self.backbone,
+                        [self.shrink_conv, self.cls_head, self.reg_head],
+                        box_flow=box_flow_map, reserved_mask=reserved_mask,
+                        flow_gt=flow_gt, viz_bbx_flag=self.viz_bbx_flag, noise_pairwise_t_matrix=noise_pairwise_t_matrix)
             elif self.design_mode == 4:
                 fused_feature, communication_rates, result_dict = self.rain_fusion(batch_dict['spatial_features'],
                     psm_single,
@@ -456,13 +582,16 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
         else: 
             psm = self.cls_head(fused_feature)
             rm = self.reg_head(fused_feature)
+            # psm = self.fused_cls_head(fused_feature)
+            # rm = self.fused_reg_head(fused_feature)
         
         # fuse 之后的 feature (ego)
         output_dict = {'psm': psm,
                        'rm': rm}
 
         if self.use_dir:
-            dm = self.dir_head(fused_feature)
+            # dm = self.dir_head(fused_feature)
+            dm = self.fused_dir_head(fused_feature)
             output_dict.update({'dm': dm})
 
         if self.compensation:
@@ -489,6 +618,14 @@ class PointPillarWhere2commFlowTwoStageWDir(nn.Module):
                 'single_detection_bbx': single_detection_bbx, 
                 'matched_idx_list': matched_idx_list, 
                 'compensated_results_list': compensated_results_list
+            })
+            _, C, H, W = batch_dict['spatial_features'].shape
+            output_dict.update({
+                'single_updated_feature': single_updated_feature,
+                'single_original_feature': batch_dict['spatial_features'].reshape(-1, self.k, C, H, W)[:, 0, :, :, :], 
+                'single_flow_map': box_flow_map, 
+                'single_reserved_mask': reserved_mask, 
+                'single_original_reserved_mask': ori_reserved_mask
             })
 
         if self.design_mode == 1:

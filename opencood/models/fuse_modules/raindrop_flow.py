@@ -177,8 +177,9 @@ class raindrop_fuse(nn.Module):
             self.motion_pred = MotionPrediction(seq_len=1)
             self.state_classify = StateEstimation(motion_category_num=1)
         elif self.design == 4: # SyncNet
-            self.syncnet = SyncLSTM(channel_size = 64, h = 200, w = 704, k = 2)
-            print("*** SyncNet init finished! ***")
+            design4_h = 200; design4_w = 704; design4_k = 3; design4_TM_Flag = False
+            self.syncnet = SyncLSTM(channel_size = 64, h = design4_h, w = design4_w, k = design4_k, TM_Flag = design4_TM_Flag)
+            print(f"*** SyncNet init finished! channel_size = 64, h = {design4_h}, w = {design4_w}, k = {design4_k}, TM_Flag = {design4_TM_Flag} ***")
 
     def regroup(self, x, len, k=0):
         """
@@ -586,7 +587,7 @@ class raindrop_fuse(nn.Module):
         
         return updated_features_all
 
-    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, flow_gt=None, box_flow=None, reserved_mask=None):
+    def forward(self, x, rm, record_len, pairwise_t_matrix, time_diffs, backbone=None, heads=None, flow_gt=None, box_flow=None, reserved_mask=None, viz_bbx_flag=False, noise_pairwise_t_matrix=None, num_roi_thres=-1):
         """
         Fusion forwarding.
         
@@ -628,6 +629,52 @@ class raindrop_fuse(nn.Module):
         pairwise_t_matrix[...,0,2] = pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
         pairwise_t_matrix[...,1,2] = pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
 
+        if noise_pairwise_t_matrix is not None:
+            noise_pairwise_t_matrix = noise_pairwise_t_matrix[:,:,:,[0, 1],:][:,:,:,:,[0, 1, 3]] 
+            noise_pairwise_t_matrix[...,0,1] = noise_pairwise_t_matrix[...,0,1] * H / W
+            noise_pairwise_t_matrix[...,1,0] = noise_pairwise_t_matrix[...,1,0] * W / H
+            noise_pairwise_t_matrix[...,0,2] = noise_pairwise_t_matrix[...,0,2] / (self.downsample_rate * self.discrete_ratio * W) * 2
+            noise_pairwise_t_matrix[...,1,2] = noise_pairwise_t_matrix[...,1,2] / (self.downsample_rate * self.discrete_ratio * H) * 2
+
+        # single frame TODO: 
+        # batch_confidence_maps = self.regroup(psm_single, record_len, 1) # [[2*3, 2, 100/2, 252/2], [3*3, 2, 100/2, 252/2], ...]
+        self.num_roi_thres = num_roi_thres
+        if self.num_roi_thres > 0:
+            self.thre = 0.01
+            _, _, H, W = rm.shape
+            num_valid_thres = self.num_roi_thres * 10
+            communication_maps = rm.sigmoid().max(dim=1)[0].unsqueeze(1)
+            communication_masks_list = []
+            curr_batch = communication_maps.shape[0] # num_cav * k
+            communication_mask = (communication_maps>self.thre).to(torch.int)
+            valid_nums = torch.sum(communication_mask, dim=(-1, -2, -3))
+
+            final_comm_mask = torch.zeros_like(communication_mask)
+            for i in range(curr_batch):
+                if valid_nums[i] > num_valid_thres :
+                    # 选择 comm_maps[i] 里面 top num_valid 的位置
+                    tmp = communication_maps[i].reshape((1, -1))
+                    _, idx = torch.topk(tmp, num_valid_thres)
+                    # print(idx)
+                    curr_mask = torch.zeros_like(tmp)
+                    curr_mask[0, idx[0]] = 1
+                    final_comm_mask[i] = curr_mask.reshape((1, H, W))
+                else:
+                    final_comm_mask[i] = communication_mask[i]
+
+            #     communication_mask = final_comm_mask
+            #     communication_masks_list.append(communication_mask)
+            # # _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
+            # communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
+            # print(final_comm_mask.shape)
+            # final_comm_mask scale x 2 [B, 1, H, W] -> [B, 1, 2H, 2W]
+
+            # 将张量插值到目标大小 (B, 1, 2H, 2W)
+            interpolated_tensor = F.interpolate(final_comm_mask.to(torch.float32).to(x.device), scale_factor=2, mode='nearest')
+            interpolated_tensor[:K, ...] = 1
+
+            x = x*interpolated_tensor
+        
         # 2. feature compensation with flow
         # 2.1 generate flow, 在同一个坐标系内，计算每个cav的flow
         # 2.2 compensation
@@ -682,7 +729,10 @@ class raindrop_fuse(nn.Module):
                     # number of valid agent
                     N = record_len[b]
                     # t_matrix[i, j]-> from i to j
-                    t_matrix = pairwise_t_matrix[b][:N, 0, :, :] #(N, 2, 3)
+                    if noise_pairwise_t_matrix is not None:
+                        t_matrix = noise_pairwise_t_matrix[b][:N, 0, :, :] #(N, 2, 3)
+                    else:
+                        t_matrix = pairwise_t_matrix[b][:N, 0, :, :] #(N, 2, 3)
                     node_features = batch_node_features[b]
                     C, H, W = node_features.shape[1:]
                     neighbor_feature = warp_affine_simple(node_features,
@@ -765,6 +815,8 @@ class raindrop_fuse(nn.Module):
 
             # self.fuse_modsules(x_fuse, record_len)
         if self.design == 0 or self.design == 5:
+            if viz_bbx_flag:
+                return  x_fuse, communication_rates, {}, updated_features
             return x_fuse, communication_rates, {}
         elif self.design == 1:
             return x_fuse, communication_rates, {}, flow_recon_loss

@@ -1,9 +1,45 @@
-# OpenCOOD (internal use for MAGIC)
-[![Documentation Status](https://readthedocs.org/projects/opencood/badge/?version=latest)](https://opencood.readthedocs.io/en/latest/?badge=latest) 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
+# <center>CoBEVFlow (NeurIPS 2023)</center>
+<!-- [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)  -->
+
+| Robust Asynchronous Collaborative 3D Detection via Bird’s Eye View Flow, NeurIPS 2023.
+
+<span style="color:red">This repo is still under constructing!</span>
+
+[![paper](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2309.16940)
+[![project](https://img.shields.io/badge/project-Page-blue)](https://sizhewei.github.io/projects/cobevflow/)
 
 
-## New features (internal use for MAGIC):
+# Main Idea
+
+
+# Quick Started
+
+- Dataset Support
+  - [x] IRV2V
+  - [x] OPV2V
+  - [x] DAIR-V2X
+  - [x] V2X-Set
+
+# Citation
+```
+@misc{wei2023robust,
+      title={Robust Asynchronous Collaborative 3D Detection via Bird's Eye View Flow}, 
+      author={Sizhe Wei and Yuxi Wei and Yue Hu and Yifan Lu and Yiqi Zhong and Siheng Chen and Ya Zhang},
+      year={2023},
+      eprint={2309.16940},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
+```
+
+
+# Acknowledgement
+Many thanks to these excellent open source projects:
+- [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD)
+- [Where2comm](https://github.com/MediaBrain-SJTU/Where2comm)
+- [CoAlign](https://github.com/yifanlu0227/CoAlign)
+
+<!-- ## New features (internal use for MAGIC):
 
 - Dataset Support
   - [x] OPV2V
@@ -217,4 +253,4 @@ Runsheng Xu*, Hao Xiang*, Zhengzhong Tu*, Xin Xia, Ming-Hsuan Yang, Jiaqi Ma <br
 **OPV2V: An Open Benchmark Dataset and Fusion Pipeline for Perception with Vehicle-to-Vehicle Communication** <br>
 Runsheng Xu*, Hao Xiang*, Xin Xia, Jinlong Li, Jiaqi Ma <br>
 *ICRA2022* <br>
-[[Paper]](https://arxiv.org/abs/2109.07644) [[Website]](https://mobility-lab.seas.ucla.edu/opv2v/) [[Code]](https://github.com/DerrickXuNu/OpenCOOD)
+[[Paper]](https://arxiv.org/abs/2109.07644) [[Website]](https://mobility-lab.seas.ucla.edu/opv2v/) [[Code]](https://github.com/DerrickXuNu/OpenCOOD) -->

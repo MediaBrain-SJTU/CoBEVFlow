@@ -283,6 +283,7 @@ class BaseDataset(Dataset):
             res = file.split('/')[-1]
 
             timestamp = res.replace('.yaml', '')
+            timestamp = timestamp.replace('.json', '')
             timestamps.append(timestamp)
 
         return timestamps

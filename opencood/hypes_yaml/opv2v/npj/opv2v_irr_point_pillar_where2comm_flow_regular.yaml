@@ -1,8 +1,8 @@
 name: where2comm_flow_regular
 
-root_dir: "/DB/public/OPV2V_irregular_npy/train/"
-validate_dir: "/DB/public/OPV2V_irregular_npy/validate"
-test_dir: "/DB/public/OPV2V_irregular_npy/test"
+root_dir: "/remote-home/share/OPV2V_irregular_npy/train"
+validate_dir: "/remote-home/share/OPV2V_irregular_npy/validate"
+test_dir: "/remote-home/share/OPV2V_irregular_npy/test"
 
 noise_setting:
   add_noise: False
@@ -13,7 +13,7 @@ noise_setting:
   #   rot_mean: 0
 
 exp_name: ""
-num_sweep_frames: &past_k 5 # TODO:
+num_sweep_frames: &past_k 3 # TODO:
 
 binomial_n: 10
 binomial_p: 0.1

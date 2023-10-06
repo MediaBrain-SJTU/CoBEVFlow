@@ -424,7 +424,7 @@ class Canvas_BEV_heading_right(object):
                    boxes,
                    colors=None,
                    texts=None,
-                   box_line_thickness=2,
+                   box_line_thickness=3,
                    box_text_size=0.5,
                    text_corner=0):
         """

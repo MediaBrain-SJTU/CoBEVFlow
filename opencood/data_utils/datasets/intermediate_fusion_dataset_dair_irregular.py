@@ -142,6 +142,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         self.post_processor = post_processor.build_postprocessor(
             params['postprocess'],
             train)
+        self.anchor_box = self.post_processor.generate_anchor_box()
 
         #这里root_dir是一个json文件！--> 代表一个split
         if self.train:
@@ -238,7 +239,8 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # B(n, p)
         trails = bernoulliDist.rvs(self.binomial_n)
         sample_interval = sum(trails)
-
+        
+        curr_inf_frame_id = inf_frame_id
         inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
 
         system_error_offset = frame_info["system_error_offset"]
@@ -259,6 +261,8 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         data[0]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["vehicle_pointcloud_path"]))
         if self.clip_pc:
             data[0]['lidar_np'] = data[0]['lidar_np'][data[0]['lidar_np'][:,0]>0]
+
+        data[0]['lidar_np_curr'] = data[0]['lidar_np'] # vehicle side lidar is no delay
             
         data[1] = OrderedDict()
         data[1]['ego'] = False
@@ -273,13 +277,130 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
         data[1]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix1)
 
+
+        # single label 
+        data[0]['params']['vehicles_single'] = load_json(os.path.join(self.root_dir, \
+                                'vehicle-side/label/lidar/{}.json'.format(veh_frame_id)))
+        data[1]['params']['vehicles_single'] = load_json(os.path.join(self.root_dir, \
+                                'infrastructure-side/label/virtuallidar/{}.json'.format(inf_frame_id)))
+
         cur_inf_info = self.inf_idx2info[inf_frame_id]
         data[1]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir, \
             'infrastructure-side', cur_inf_info['pointcloud_path']))
+
+        curr_inf_info = self.inf_idx2info[curr_inf_frame_id]
+        data[1]['lidar_np_curr'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir, \
+            'infrastructure-side', curr_inf_info['pointcloud_path']))
+
         data[0]['veh_frame_id'] = veh_frame_id
         data[1]['veh_frame_id'] = inf_frame_id
         data[1]['avg_time_delay'] = sample_interval
         return data
+
+
+    def get_item_single_car(self, selected_cav_base, ego_pose, ego_pose_clean, idx):
+        """
+        Project the lidar and bbx to ego space first, and then do clipping.
+
+        Parameters
+        ----------
+        selected_cav_base : dict
+            The dictionary contains a single CAV's raw information.
+        ego_pose : list, length 6
+            The ego vehicle lidar pose under world coordinate.
+        ego_pose_clean : list, length 6
+            only used for gt box generation
+        
+        idx: int,
+            debug use.
+
+        Returns
+        -------
+        selected_cav_processed : dict
+            The dictionary contains the cav's processed information.
+        """
+        selected_cav_processed = {}
+
+
+
+        # calculate the transformation matrix
+        transformation_matrix = \
+            x1_to_x2(selected_cav_base['params']['lidar_pose'],
+                     ego_pose) # T_ego_cav
+        transformation_matrix_clean = \
+            x1_to_x2(selected_cav_base['params']['lidar_pose_clean'],
+                     ego_pose_clean)
+
+        # retrieve objects under ego coordinates
+        # this is used to generate accurate GT bounding box.
+        object_bbx_center, object_bbx_mask, object_ids = self.generate_object_center([selected_cav_base],
+                                                    ego_pose_clean)
+
+        # filter lidar
+        lidar_np = selected_cav_base['lidar_np']
+        lidar_np = shuffle_points(lidar_np)
+        # remove points that hit itself
+        lidar_np = mask_ego_points(lidar_np)
+
+        # current lidar np, w.o. delay
+        # filter lidar
+        curr_lidar_np = selected_cav_base['lidar_np_curr']
+        curr_lidar_np = shuffle_points(curr_lidar_np)
+        # remove points that hit itself
+        curr_lidar_np = mask_ego_points(curr_lidar_np)
+
+        # project the lidar to ego space
+        # x,y,z in ego space
+        projected_lidar = \
+            box_utils.project_points_by_matrix_torch(curr_lidar_np[:, :3],
+                                                        transformation_matrix)
+        if self.kd_flag:
+            lidar_np_clean = copy.deepcopy(lidar_np)
+
+        if self.proj_first:
+            lidar_np[:, :3] = projected_lidar
+            
+        lidar_np = mask_points_by_range(lidar_np,
+                                        self.params['preprocess'][
+                                            'cav_lidar_range'])
+        
+
+        processed_lidar = self.pre_processor.preprocess(lidar_np)
+
+        selected_cav_processed.update(
+            {'object_bbx_center': object_bbx_center[object_bbx_mask == 1],
+             'object_ids': object_ids,
+             'projected_lidar': projected_lidar,
+             'processed_features': processed_lidar,
+             'transformation_matrix': transformation_matrix,
+             'transformation_matrix_clean': transformation_matrix_clean})
+
+        if self.kd_flag:
+            projected_lidar_clean = \
+                box_utils.project_points_by_matrix_torch(lidar_np_clean[:, :3],
+                                                    transformation_matrix_clean)
+            lidar_np_clean[:, :3] = projected_lidar_clean
+            lidar_np_clean = mask_points_by_range(lidar_np_clean,
+                                        self.params['preprocess'][
+                                            'cav_lidar_range'])
+            selected_cav_processed.update(
+                {"projected_lidar_clean": lidar_np_clean}
+            )
+
+        # generate targets label single GT, note the reference pose is itself.
+        object_bbx_center, object_bbx_mask, object_ids = self.generate_object_center_single(
+            [selected_cav_base], selected_cav_base['params']['lidar_pose']
+        )
+        
+        label_dict = self.post_processor.generate_label(
+            gt_box_center=object_bbx_center, anchors=self.anchor_box, mask=object_bbx_mask
+        )
+        selected_cav_processed.update({
+                            "single_label_dict": label_dict,
+                            "single_object_bbx_center": object_bbx_center,
+                            "single_object_bbx_mask": object_bbx_mask})
+
+        return selected_cav_processed
 
     def __getitem__(self, idx):
         # base_data_dict = self.retrieve_base_data(idx)
@@ -315,6 +436,9 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         lidar_pose_clean_list = []
         projected_lidar_clean_list = []
         cav_id_list = []
+        single_label_list = []
+        single_object_bbx_center_list = []
+        single_object_bbx_mask_list = []
 
         if self.visualize:
             projected_lidar_stack = []
@@ -340,41 +464,8 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
             cav_id_list.append(cav_id)
 
 
-        ########## Added by Yifan Lu 2022.8.14 ##############
-        # box align to correct pose.
-        '''
-        if self.box_align and str(idx) in self.stage1_result.keys():
-            stage1_content = self.stage1_result[str(idx)]
-            if stage1_content is not None:
-                cav_id_list_stage1 = stage1_content['cav_id_list']
-                
-                pred_corners_list = stage1_content['pred_corner3d_np_list']
-                pred_corners_list = [np.array(corners, dtype=np.float64) for corners in pred_corners_list]
-                uncertainty_list = stage1_content['uncertainty_np_list']
-                uncertainty_list = [np.array(uncertainty, dtype=np.float64) for uncertainty in uncertainty_list]
-                stage1_lidar_pose_list = [base_data_dict[cav_id]['params']['lidar_pose'] for cav_id in cav_id_list_stage1]
-                stage1_lidar_pose = np.array(stage1_lidar_pose_list)
-
-
-                refined_pose = box_alignment_relative_sample_np(pred_corners_list,
-                                                                stage1_lidar_pose, 
-                                                                uncertainty_list=uncertainty_list, 
-                                                                **self.box_align_args)
-                stage1_lidar_pose[:,[0,1,4]] = refined_pose
-                stage1_lidar_pose_refined_list = stage1_lidar_pose.tolist() # updated lidar_pose_list
-                for cav_id, lidar_pose_refined in zip(cav_id_list_stage1, stage1_lidar_pose_refined_list):
-                    if cav_id not in cav_id_list:
-                        continue
-                    idx_in_list = cav_id_list.index(cav_id)
-                    lidar_pose_list[idx_in_list] = lidar_pose_refined
-                    base_data_dict[cav_id]['params']['lidar_pose'] = lidar_pose_refined
-        '''     
-
-
         for cav_id in cav_id_list:
             selected_cav_base = base_data_dict[cav_id]
-
-
 
             selected_cav_processed = self.get_item_single_car(
                 selected_cav_base,
@@ -395,9 +486,9 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                 projected_lidar_stack.append(
                     selected_cav_processed['projected_lidar'])
 
-
-
-
+            single_label_list.append(selected_cav_processed['single_label_dict'])
+            single_object_bbx_center_list.append(selected_cav_processed['single_object_bbx_center'])
+            single_object_bbx_mask_list.append(selected_cav_processed['single_object_bbx_mask'])
 
         ########## Added by Yifan Lu 2022.4.5 ################
         # filter those out of communicate range
@@ -412,6 +503,17 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         lidar_poses = np.array(lidar_pose_list).reshape(-1, 6)  # [N_cav, 6]
         lidar_poses_clean = np.array(lidar_pose_clean_list).reshape(-1, 6)  # [N_cav, 6]
         ######################################################
+
+        # single label
+        single_label_dicts = self.post_processor.collate_batch(single_label_list)
+        single_object_bbx_center = torch.from_numpy(np.array(single_object_bbx_center_list))
+        single_object_bbx_mask = torch.from_numpy(np.array(single_object_bbx_mask_list))
+        processed_data_dict['ego'].update({
+            "single_label_dict_torch": single_label_dicts,
+            "single_object_bbx_center_torch": single_object_bbx_center,
+            "single_object_bbx_mask_torch": single_object_bbx_mask,
+            })
+
 
         ############ for disconet ###########
         if self.kd_flag:
@@ -525,6 +627,18 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         return self.post_processor.generate_object_center_dairv2x(cav_contents,
                                                         reference_lidar_pose)
 
+    ### Add new func for single side
+    def generate_object_center_single(self,
+                               cav_contents,
+                               reference_lidar_pose,
+                               **kwargs):
+        """
+        veh or inf 's coordinate
+        """
+        suffix = "_single"
+
+        return self.post_processor.generate_object_center_dairv2x_single(cav_contents, suffix)
+
     def collate_batch_train(self, batch):
         # Intermediate fusion is different the other two
         output_dict = {'ego': {}}
@@ -538,6 +652,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         label_dict_list = []
         lidar_pose_list = []
         lidar_pose_clean_list = []
+        pos_equal_one_single = []
+        neg_equal_one_single = []
+        targets_single = []
+        object_bbx_center_single = []
+        object_bbx_mask_single = []
+
 
         # average time delay
         avg_time_delay = []
@@ -574,6 +694,12 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
 
             if self.visualize:
                 origin_lidar.append(ego_dict['origin_lidar'])
+
+            pos_equal_one_single.append(ego_dict['single_label_dict_torch']['pos_equal_one'])
+            neg_equal_one_single.append(ego_dict['single_label_dict_torch']['neg_equal_one'])
+            targets_single.append(ego_dict['single_label_dict_torch']['targets'])
+            object_bbx_center_single.append(ego_dict['single_object_bbx_center_torch'])
+            object_bbx_mask_single.append(ego_dict['single_object_bbx_mask_torch'])
 
         # convert to numpy, (B, max_num, 7)
         object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
@@ -618,6 +744,19 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         cp_rate = float(np.mean(np.array(cp_rate)))
         output_dict['ego'].update({'avg_time_delay': avg_time_delay,
                                       'cp_rate': cp_rate})  
+
+        output_dict['ego'].update({
+            "single_object_label":{ # the same name as opencood/data_utils/datasets/intermediate_fusion_dataset_opv2v_irregular_flow_new.py 
+                    "pos_equal_one": torch.cat(pos_equal_one_single, dim=0),
+                    "neg_equal_one": torch.cat(neg_equal_one_single, dim=0),
+                    "targets": torch.cat(targets_single, dim=0),
+                    # for centerpoint
+                    "object_bbx_center_single": torch.cat(object_bbx_center_single, dim=0),
+                    "object_bbx_mask_single": torch.cat(object_bbx_mask_single, dim=0)
+                },
+            "object_bbx_center_single": torch.cat(object_bbx_center_single, dim=0),
+            "object_bbx_mask_single": torch.cat(object_bbx_mask_single, dim=0)
+        })
 
 
         if self.visualize:
