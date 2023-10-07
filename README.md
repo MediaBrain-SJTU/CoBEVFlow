@@ -7,7 +7,7 @@ This repository contains the official PyTorch implementation of NeurIPS 2023 pap
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/robust-asynchronous-collaborative-3d/3d-object-detection-on-irv2v)](https://paperswithcode.com/sota/3d-object-detection-on-irv2v?p=robust-asynchronous-collaborative-3d)
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/robust-asynchronous-collaborative-3d/3d-object-detection-on-dair-v2x)](https://paperswithcode.com/sota/3d-object-detection-on-dair-v2x?p=robust-asynchronous-collaborative-3d)
 [![paper](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2309.16940)
-[![project](https://img.shields.io/badge/project-Page-blue)](https://sizhewei.github.io/projects/cobevflow/)
+<!-- [![project](https://img.shields.io/badge/project-Page-blue)](https://sizhewei.github.io/projects/cobevflow/) -->
 
 
 ## Main Idea
