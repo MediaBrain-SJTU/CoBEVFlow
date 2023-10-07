@@ -63,6 +63,7 @@ data_augment:
 # anchor box related
 postprocess:
   core_method: 'VoxelPostprocessor' # VoxelPostprocessor, BevPostprocessor supported
+  dir_args: *id001
   gt_range: *cav_lidar
   anchor_args:
     cav_lidar_range: *cav_lidar
@@ -118,6 +119,7 @@ model:
       dim: [ 256 ]
       input_dim: 384 # 128 * 3
     
+    dir_args: *id001
     # dcn:
     #   in_channels: [384]
     #   out_channels: [256]
@@ -188,6 +190,14 @@ loss:
   args:
     cls_weight: 1.0
     reg: 2.0
+    dir_args: 
+      dir_weight: 0.2
+      anchor_yaw: &id003
+      - 0
+      - 90
+      args: &id001
+        dir_offset: 0.7853
+        num_bins: 2
 
 optimizer:
   core_method: Adam
