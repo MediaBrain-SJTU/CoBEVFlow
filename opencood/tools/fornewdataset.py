@@ -1,5 +1,5 @@
 '''
-用来给 Yuxi Wei 做 Prediction 模块的训练数据 
+Prediction model input data generation.
 SizheWei 2023.4.23
 '''
 
