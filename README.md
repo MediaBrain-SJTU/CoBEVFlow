@@ -1,14 +1,13 @@
 # <center>CoBEVFlow (NeurIPS 2023)</center>
-<!-- [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)  -->
-
 This repository contains the official PyTorch implementation of NeurIPS 2023 paper "[Asynchrony-Robust Collaborative Perception via Bird’s Eye View Flow](https://arxiv.org/abs/2309.16940)". 
 [Sizhe Wei](https://sizhewei.github.io/), [Yuxi Wei](https://www.linkedin.cn/incareer/in/ACoAADSxRKcB7zJIIKFvPU9bvO1G2BT7Mx6S4vw), [Yue Hu](https://phyllish.github.io), [Yifan Lu](https://yifanlu0227.github.io/), [Yiqi Zhong](https://scholar.google.com/citations?user=Bv8l8jkAAAAJ&hl=en&authuser=1), [Siheng Chen](http://siheng-chen.github.io/), [Ya Zhang](https://mediabrain.sjtu.edu.cn/yazhang/).
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/robust-asynchronous-collaborative-3d/3d-object-detection-on-irv2v)](https://paperswithcode.com/sota/3d-object-detection-on-irv2v?p=robust-asynchronous-collaborative-3d)
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/robust-asynchronous-collaborative-3d/3d-object-detection-on-dair-v2x)](https://paperswithcode.com/sota/3d-object-detection-on-dair-v2x?p=robust-asynchronous-collaborative-3d)
 [![paper](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2309.16940)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 <!-- [![project](https://img.shields.io/badge/project-Page-blue)](https://sizhewei.github.io/projects/cobevflow/) -->
-
+![Flow](./images/viz-2.png)
 
 ## Main Idea
 ### Abstract
@@ -91,13 +90,11 @@ The evaluation results  will be dumped in the model directory.
 ## Citation
 If you are using CoBEVFlow, or IRV2V dataset for your research, please cite the following paper:
 ```
-@misc{wei2023asynchronyrobust,
+@inproceedings{wei2023asynchronyrobust,
       title={Asynchrony-Robust Collaborative Perception via Bird's Eye View Flow}, 
       author={Sizhe Wei and Yuxi Wei and Yue Hu and Yifan Lu and Yiqi Zhong and Siheng Chen and Ya Zhang},
-      year={2023},
-      eprint={2309.16940},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+      booktitle = {Advances in Neural Information Processing Systems},
+      year={2023}
 }
 ```
 
