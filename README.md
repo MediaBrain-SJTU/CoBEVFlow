@@ -7,6 +7,26 @@ This repository contains the official PyTorch implementation of NeurIPS 2023 pap
 [![paper](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2309.16940)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 <!-- [![project](https://img.shields.io/badge/project-Page-blue)](https://sizhewei.github.io/projects/cobevflow/) -->
+
+<div align="center">
+  <table style="width:800px">
+    <tr>
+      <td align="center" style="width:400px">
+        <p style="font-size: 90%; color: #999999">Asynchronous Co-Perception</p>
+        <p><img src="./images/cobevflow_viz/viz_wo_cobevflow/0153_croped_750_90_2112_710.gif" width="400px"></p>
+        <p><img src="./images/cobevflow_viz/viz_wo_cobevflow/0183_croped_750_90_2112_710.gif" width="400px"></p>
+        <p><img src="./images/cobevflow_viz/viz_wo_cobevflow/0390_croped_800_90_2162_710.gif" width="400px"></p>
+      </td>
+      <td align="center" style="width:400px">
+        <p style="font-size: 90%; color: #999999">With CoBEVFlow</p>
+        <p><img src="./images/cobevflow_viz/viz_w_cobevflow/0153_croped_750_90_2112_710.gif" width="400px"></p>
+        <p><img src="./images/cobevflow_viz/viz_w_cobevflow/0183_croped_750_90_2112_710.gif" width="400px"></p>
+        <p><img src="./images/cobevflow_viz/viz_w_cobevflow/0390_croped_800_90_2162_710.gif" width="400px"></p>
+      </td>
+    </tr>
+  </table>
+</div>
+
 ![Flow](./images/viz-2.png)
 
 ## Main Idea
